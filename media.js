@@ -5929,6 +5929,21 @@ const docAdoptedImageCache = {};
    image can never mint two records under one id. */
 const docAdoptedImageById = {};
 
+/* v2.203: the notes this sitting has already told
+   about a picture of text left standing as a plain
+   image (see the exemption in docAdoptOneImage):
+   the notice fires once per note per sitting, so
+   a note carrying several strips, or converted
+   again by a save's merge, does not repeat it. */
+const docTextStripNoticedNotes = new Set();
+function docTextStripNoticeOnce(note) {
+  const id = note && note.id;
+  if (!id || docTextStripNoticedNotes.has(id)) { return; }
+  docTextStripNoticedNotes.add(id);
+  toast("Some text in this note arrived from Google " +
+    "as a picture and was left as-is.");
+}
+
 /* v2.191: an image's identity inside the Doc itself.
    docBuildUploadHtml writes an inlined image's alt
    as the record's name plus a trailing suffix,
@@ -6030,6 +6045,42 @@ function docDataUriByteLength(parts) {
   return n;
 }
 
+/* v2.203: an identity-less image no taller than
+   this is a picture of text, not a picture: the
+   strips Google renders out of styled Doc text
+   stand 18px tall, and no photograph or placed
+   picture a person puts in a note is this thin.
+   See the exemption in docAdoptOneImage. */
+const DOC_TEXT_STRIP_MAX_HEIGHT_PX = 24;
+
+/* v2.203: the pixel height of a data URI image,
+   read from the payload's own header (a PNG
+   carries it big-endian at bytes 20-23, a GIF
+   little-endian at bytes 8-9), or null when the
+   format is one this reader does not know, in
+   which case the image is judged exactly as it
+   was before this build. Only the payload's
+   first 44 base64 characters (33 bytes) are
+   decoded, so the cost is flat however large
+   the picture is. */
+function docImagePixelHeight(parts) {
+  if (!parts || !parts.data) { return null; }
+  const head = decodeDropboxBase64(
+    String(parts.data).replace(/\s+/g, "")
+      .slice(0, 44));
+  if (!head || head.length < 10) { return null; }
+  if (parts.mime === "image/png" && head.length >= 24 &&
+      head[0] === 0x89 && head[1] === 0x50) {
+    return ((head[20] * 256 + head[21]) * 256 +
+      head[22]) * 256 + head[23];
+  }
+  if (parts.mime === "image/gif" && head.length >= 10 &&
+      head[0] === 0x47 && head[1] === 0x49) {
+    return head[8] + head[9] * 256;
+  }
+  return null;
+}
+
 /* v2.135: the record an adoption lands rides a
    sink when the caller passes one (the adoption
    pool in docAdoptImages collects each image's
@@ -6060,6 +6111,64 @@ async function docAdoptOneImage(note, img, sink, reusePool,
     const hash = docDataUriHash(src);
     const cacheKey = note.id + "|" + hash;
     const wantSize = docDataUriByteLength(parts);
+    /* v2.203: the records this conversion pass has
+       already handed to a figure, kept on the pass's
+       own context (docAdoptImages mints one per pass).
+       The session cache branch below consults it: a
+       cached record already claimed by an earlier
+       figure in this same conversion is never handed
+       to a second figure (the Period C collapse: three
+       byte-identical images, one cached record, three
+       figures stamped with ids from an earlier pass,
+       and a save that could no longer match two of
+       them). The pool claims are already one-to-one
+       (they splice); the cache was the one door left
+       open. */
+    const claimed = healCtx ? (healCtx.claimedRecords ||
+      (healCtx.claimedRecords = new Set())) : null;
+    /* v2.203: a picture of text is not an attachment.
+       Google sometimes renders a styled run of a Doc
+       as a hair-thin image strip (the field strips
+       stand 18px tall) carrying no alt identity at
+       all. Adopting one mints a Drive file and a
+       record for a fragment of a sentence, and three
+       identical strips could collapse onto one record
+       (see above). An identity-less image no taller
+       than DOC_TEXT_STRIP_MAX_HEIGHT_PX whose bytes no
+       standing pool record claims is therefore left
+       standing as the plain inline image it is: no
+       upload, no record, no figure, and the save path
+       carries plain images through without demanding
+       a record. The exemption's shape is the field
+       evidence's own shape: the strips carry no alt
+       text at all, so an image carrying ANY alt text,
+       a plain word of a name included, is judged
+       exactly as it always was, identity or none; a
+       tiny image WITH an identity still claims and
+       matches normally (the identity claim below is
+       untouched), and a normal-sized image still
+       adopts as it always has. The token
+       is flagged so docAdoptImages can tell the user,
+       once per note per sitting, what was left
+       as-is. */
+    if (!altId && !label) {
+      const pxHeight = docImagePixelHeight(parts);
+      const poolClaimsIt = (reusePool || []).some(
+        function (rec) {
+          return rec && rec.imgHash === hash &&
+            rec.mime === parts.mime &&
+            Number(rec.size) === wantSize;
+        });
+      if (pxHeight !== null &&
+          pxHeight <= DOC_TEXT_STRIP_MAX_HEIGHT_PX &&
+          !poolClaimsIt) {
+        img.textStripExempt = true;
+        const wAttr = img.width ? " style=\"width:" +
+          img.width + "px\"" : "";
+        return "<img src=\"" + src + "\" alt=\"\"" +
+          wAttr + ">";
+      }
+    }
     const figureFor = function (rec) {
       return "<figure class=\"ss-attachment\"" +
         " data-attachment-id=\"" + rec.id + "\"" +
@@ -6085,6 +6194,7 @@ async function docAdoptOneImage(note, img, sink, reusePool,
             String(rec.mime || "")
               .indexOf("image/") === 0) {
           reusePool.splice(ri, 1);
+          if (claimed) { claimed.add(rec); }
           docAdoptedImageCache[cacheKey] = rec;
           docAdoptedImageById[note.id + "|" +
             altId] = rec;
@@ -6118,6 +6228,7 @@ async function docAdoptOneImage(note, img, sink, reusePool,
             rec.mime === parts.mime &&
             Number(rec.size) === wantSize) {
           reusePool.splice(ri, 1);
+          if (claimed) { claimed.add(rec); }
           docAdoptedImageCache[cacheKey] = rec;
           if (altId && rec.id === altId) {
             docAdoptedImageById[note.id + "|" +
@@ -6128,8 +6239,17 @@ async function docAdoptOneImage(note, img, sink, reusePool,
         }
       }
     }
+    /* v2.203: the cache answers one to one per pass
+       (see the claimed set above). A cached record an
+       earlier figure in this conversion already holds
+       is not handed out again; the image falls
+       through to the roads below (a genuine duplicate
+       carrying the same alt identity is still served
+       by the by-id road; an identity-less twin reaches
+       fresh adoption and mints its own record). */
     const cached = docAdoptedImageCache[cacheKey];
-    if (cached) {
+    if (cached && !(claimed && claimed.has(cached))) {
+      if (claimed) { claimed.add(cached); }
       bag.push(cached);
       return figureFor(cached);
     }
@@ -6184,6 +6304,7 @@ async function docAdoptOneImage(note, img, sink, reusePool,
         docAdoptedImageCache[cacheKey] = use;
         docAdoptedImageById[note.id + "|" +
           altId] = use;
+        if (claimed) { claimed.add(use); }
         bag.push(use);
         return figureFor(use);
       }
@@ -6292,6 +6413,7 @@ async function docAdoptOneImage(note, img, sink, reusePool,
       docAdoptedImageCache[cacheKey] = record;
       docAdoptedImageById[note.id + "|" +
         record.id] = record;
+      if (claimed) { claimed.add(record); }
       bag.push(record);
       return figureFor(record);
     } catch (e) {
@@ -6821,6 +6943,15 @@ async function docAdoptImages(note, converted) {
   const width = Math.min(6, tokens.length);
   for (let k = 0; k < width; k++) { pool.push(worker()); }
   await Promise.all(pool);
+  /* v2.203: if this pass left any picture of text
+     standing as a plain image (see the exemption
+     in docAdoptOneImage), say so, once per note
+     per sitting. */
+  if ((converted.images || []).some(function (t) {
+    return t && t.textStripExempt;
+  })) {
+    docTextStripNoticeOnce(note);
+  }
   /* v2.193: the link judgments run with the image
      adoptions settled, against what the pool still
      holds; the records the image adoptions landed
@@ -8753,6 +8884,11 @@ async function docBuildUploadHtml(note) {
     tocBlocks[ti].replaceWith(
       tocScratch.firstElementChild);
   }
+  /* v2.203: one heal context for the whole build:
+     a figure whose record is missing gets one
+     folder listing however many figures heal (see
+     the unmatched branch below). */
+  const healCtx = {};
   const figures = holder.querySelectorAll(
     "figure.ss-attachment, div.ss-attachment");
   for (let i = 0; i < figures.length; i++) {
@@ -8784,8 +8920,39 @@ async function docBuildUploadHtml(note) {
       continue;
     }
     const attId = el.getAttribute("data-attachment-id");
-    const record = (note.attachments || []).find(
+    let record = (note.attachments || []).find(
       function (a) { return a && a.id === attId; });
+    if (!record && attId) {
+      /* v2.203: before the refusal below, the
+         figure gets the open path's own judgment
+         (v2.199): if its file still stands in the
+         attachments folder under its record id,
+         the record is rebuilt and stands in the
+         note, and the figure crosses like any
+         other. A record can be missing here even
+         when the open-path heal already ran: the
+         heal at open judges the figures hydration
+         shows it, and a figure whose record a
+         conversion pass collapsed (the Period C
+         shape) only shows its missing record when
+         the save rebuilds the body. The heal
+         rebuilds image records only; a file tile
+         whose record is gone falls through to the
+         refusal exactly as before. */
+      const healed = await docHealMissingImageRecord(
+        note, attId, healCtx);
+      if (healed) {
+        if (!note.attachments) {
+          note.attachments = [];
+        }
+        if (!note.attachments.some(function (a) {
+          return a && a.id === healed.id;
+        })) {
+          note.attachments.push(healed);
+        }
+        record = healed;
+      }
+    }
     if (!record) {
       /* v2.191: fail closed. This branch used to
          write the bare text "[Image]" for the

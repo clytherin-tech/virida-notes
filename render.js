@@ -7534,6 +7534,79 @@ function syncNormalizeBooleanAttrs(html) {
   });
   return out;
 }
+/* v2.203: the figure paragraph canonicalization
+   the dirty gate's equality also speaks (see
+   noteGateContentEqual). An attachment figure
+   standing inside a paragraph in a stored body
+   ("<p>words<figure ...></figure>more</p>", the
+   form a Doc conversion lays down) cannot stand
+   inside a paragraph in the editor: the editor's
+   parser closes the paragraph at the figure and
+   leaves the words after it standing bare, so the
+   collected body reads "<p>words</p><figure
+   ...></figure>more" and an untouched note judged
+   dirty against its own baseline (the phantom
+   save: one real save on an autosave pass for a
+   note nobody edited). The stored paragraph's own
+   closing tag, left stray by the split, makes the
+   parser manufacture an empty paragraph after the
+   words ("more<p></p>"), so that artifact is
+   canonicalized away too, in the same shell's
+   neighborhood only. Both sides are
+   canonicalized the same way here: the paragraph
+   tags that touch an attachment shell are
+   dropped, the shell and every word standing.
+   Nothing else is touched: a single changed
+   character anywhere still compares unequal, and
+   a paragraph boundary nowhere near a shell
+   still counts. The transforms only remove tags,
+   so repeating them to a fixed point
+   terminates. */
+function syncNormalizeFigureParagraphs(html) {
+  const shell = "<(?:figure|div) class=" +
+    "\"ss-attachment\"[^>]*>" +
+    "(?:<figcaption[^>]*>[\\s\\S]*?</figcaption>)?" +
+    "</(?:figure|div)>";
+  let out = String(html || "");
+  for (let pass = 0; pass < 4; pass++) {
+    const before = out;
+    out = out.replace(new RegExp("</p>(" +
+      "<(?:figure|div) class=\"ss-attachment\")",
+      "g"), "$1");
+    out = out.replace(new RegExp("(" + shell +
+      ")([^]*?)</p>", "g"),
+      function (m, shellHtml, mid) {
+        const midBare = mid.replace(new RegExp(
+          shell, "g"), "");
+        if (new RegExp("<\\/?(?:p|div|ul|ol|li|" +
+            "table|thead|tbody|tr|td|th|" +
+            "blockquote|pre|h[1-6]|figure|section|" +
+            "article|hr)[\\s>]", "i")
+            .test(midBare)) {
+          return m;
+        }
+        return shellHtml + mid;
+      });
+    out = out.replace(new RegExp("(" + shell +
+      ")<p>", "g"), "$1");
+    out = out.replace(new RegExp("(" + shell +
+      ")([^]*?)<p></p>", "g"),
+      function (m, shellHtml, mid) {
+        const midBare = mid.replace(new RegExp(
+          shell, "g"), "");
+        if (new RegExp("<\\/?(?:p|div|ul|ol|li|" +
+            "table|thead|tbody|tr|td|th|" +
+            "blockquote|pre|h[1-6]|figure|section|" +
+            "article|hr)[\\s>]", "i")
+            .test(midBare)) {
+          return m;
+        }
+        return shellHtml + mid;
+      });
+    if (out === before) { break; }
+  }
+  return out;
+}
 function syncRefillContentEquivalent(a, b) {
   if (!a || !b) { return false; }
   if (a.title !== b.title) { return false; }
@@ -11518,8 +11591,12 @@ function renderEditor() {
        in a newline stands at full height, its empty
        last line boxed, before anything is touched. */
     decorateCodeCaretBrs(document.getElementById("noteBody"));
+    /* v2.203: the open render's standing state is
+       stated quietly: the save line says it, the
+       pill does not pop for it (see setSaveState). */
     setSaveState(note.trashed ? "In Trash" :
-      (note.archived ? "Archived" : "Saved"));
+      (note.archived ? "Archived" : "Saved"),
+      { quiet: true });
     /* v1.2: fill the attachment placeholders from the providers. This is
        async and fire and forget: text renders immediately, images and
        file cards pop in as each download lands. v1.7: the same pass
@@ -14298,13 +14375,53 @@ function editorContentSnapshot(note) {
   };
 }
 
-function setSaveState(text) {
+function setSaveState(text, opts) {
   document.getElementById("saveState").textContent = text;
   /* v2.5: the same text is mirrored into the rail flyout's status
      line, the save status's visible home while the sidebar is
      collapsed to the icon rail. One writer, two homes. */
   const railSave = document.getElementById("railSaveState");
   if (railSave) { railSave.textContent = text; }
+  /* v2.203: a quiet call updates the save line alone
+     and leaves the pill where it stands. The pill is
+     the save EVENT's surface: it shows for a real
+     save and its outcome. The standing Saved state
+     is not an event: the open render states it for
+     the note just opened, and the autosave's no-op
+     landing restates it for a note that never
+     changed, and before this build both popped the
+     pill up on every note switch, announcing saves
+     that never happened. Quiet callers pass
+     { quiet: true }; every other wording and every
+     real save's timestamped wording flows to the
+     pill exactly as before. A quiet call also puts
+     a standing pill to rest: a pill an earlier save
+     left lingering belongs to that save's note and
+     moment, and the note now standing open at rest
+     must not wear it (the resting wordings' standing
+     rule: they render no pill). */
+  if (opts && opts.quiet) {
+    if (savePillLingerTimer !== null) {
+      clearTimeout(savePillLingerTimer);
+      savePillLingerTimer = null;
+    }
+    if (savePillFadeTimer !== null) {
+      clearTimeout(savePillFadeTimer);
+      savePillFadeTimer = null;
+    }
+    if (text !== savePillWording) {
+      savePillDismissedWording = null;
+    }
+    savePillWording = text;
+    const quietPill = document.getElementById("savePill");
+    if (quietPill) {
+      quietPill.classList.remove("fading");
+      quietPill.classList.add("hidden");
+      quietPill.setAttribute("data-state", "off");
+      quietPill.removeAttribute("title");
+    }
+    return;
+  }
   /* v2.57: the same wording also drives the floating save
      pill (renderSavePill, next below). The span the first
      line writes lives inside the pill now, so this stays

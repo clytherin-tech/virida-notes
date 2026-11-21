@@ -3102,8 +3102,11 @@ async function runEditorAutosave() {
        exactly like the note just saved (the first of
        Chris's two leave reports, 2026-11-19). The line
        keeps the note's standing saved state instead: the
-       plain "Saved" the editor opened with. */
-    setSaveState("Saved");
+       plain "Saved" the editor opened with. v2.203:
+       the restatement is quiet, the pill standing
+       down for it too: nothing saved, so no save
+       event shows (see setSaveState). */
+    setSaveState("Saved", { quiet: true });
     /* v2.50: the collected content is the saved baseline,
        so the edits this save collected are settled (see
        swEditorUnsettled at the v2.50 block). */

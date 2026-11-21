@@ -2453,9 +2453,22 @@ function noteContentEquivalent(a, b) {
    collected body passes, already unwraps them. */
 function noteGateContentEqual(a, b) {
   if (!a || !b) { return false; }
+  /* v2.203: the body comparison also speaks the
+     figure paragraph canonicalization (see
+     syncNormalizeFigureParagraphs): the editor
+     cannot hold an attachment figure inside a
+     paragraph, so a stored body that stands one
+     there and the editor's collection of the same
+     untouched note differ only in the paragraph
+     tags around the shell, and the note read
+     dirty and saved itself. Both sides are
+     canonicalized identically; every other
+     difference still compares exactly. */
   return a.title === b.title &&
-    syncNormalizeBooleanAttrs(a.body) ===
-      syncNormalizeBooleanAttrs(b.body) &&
+    syncNormalizeFigureParagraphs(
+      syncNormalizeBooleanAttrs(a.body)) ===
+    syncNormalizeFigureParagraphs(
+      syncNormalizeBooleanAttrs(b.body)) &&
     JSON.stringify(a.tags || []) ===
       JSON.stringify(b.tags || []) &&
     JSON.stringify(a.attachments || []) ===
