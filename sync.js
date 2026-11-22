@@ -721,6 +721,64 @@ function catalogGuardMergedEntries(localEntries, storedEntries) {
    are already beyond reach); and null when the read
    itself failed, which the writer treats as "do not
    write unguarded". */
+/* v2.207: the catalog write invariant. One note id has
+   exactly one row per collection, and a write carrying
+   two is unwritable: the rows collapse here, beside the
+   guard above, before any comparison or write. The
+   guard merges a session's stale fields INTO the stored
+   row's identity; this collapse is the other half, for
+   state that itself holds two objects for one id (the
+   duplicate load shape: two files, one id, one note
+   object each). On a contest the row whose fileId
+   matches the stored catalog's row for that id wins,
+   because the stored catalog is the record of which
+   file the note stands on; with no stored row, or no
+   fileId match, the first row stands. Entries without
+   a string id or collection are not catalog rows this
+   pass may judge and pass through untouched. Every
+   collapse is logged: a collapse means a load produced
+   a duplicate, which the v2.207 load identity fix
+   should have prevented, so the log line is the
+   tripwire that says it happened anyway. */
+function catalogCollapseDuplicateEntries(entries, storedEntries) {
+  const storedByKey = Object.create(null);
+  (storedEntries || []).forEach(function (entry) {
+    if (entry && typeof entry.id === "string" && entry.id &&
+        typeof entry.collection === "string") {
+      storedByKey[entry.collection + "|" + entry.id] = entry;
+    }
+  });
+  const keptByKey = Object.create(null);
+  const out = [];
+  (entries || []).forEach(function (entry) {
+    if (!entry || typeof entry.id !== "string" || !entry.id ||
+        typeof entry.collection !== "string") {
+      out.push(entry);
+      return;
+    }
+    const key = entry.collection + "|" + entry.id;
+    const keptIndex = keptByKey[key];
+    if (keptIndex === undefined) {
+      keptByKey[key] = out.length;
+      out.push(entry);
+      return;
+    }
+    const kept = out[keptIndex];
+    const stored = storedByKey[key] || null;
+    let winner = kept;
+    if (stored && typeof stored.fileId === "string" &&
+        stored.fileId &&
+        entry.fileId === stored.fileId &&
+        kept.fileId !== stored.fileId) {
+      winner = entry;
+      out[keptIndex] = entry;
+    }
+    console.warn("Catalog write collapsed a duplicate entry for " +
+      key + " (kept file " + (winner.fileId || "none") + ").");
+  });
+  return out;
+}
+
 async function readStoredCatalogEntries() {
   let file;
   try {
@@ -763,6 +821,10 @@ async function writeCatalogOnce() {
   if (storedEntries === null) { return false; }
   snapshot.entries = catalogGuardMergedEntries(
     snapshot.entries, storedEntries);
+  /* v2.207: one row per (collection, id), always (see
+     catalogCollapseDuplicateEntries above). */
+  snapshot.entries = catalogCollapseDuplicateEntries(
+    snapshot.entries, storedEntries);
   const entriesText = JSON.stringify(snapshot.entries);
   if (entriesText === lastCatalogEntriesText) { return true; }
   const text = JSON.stringify(snapshot, null, 2);
@@ -786,8 +848,9 @@ async function writeCatalogOnce() {
             freshEntries = parsedFresh.entries;
           }
         } catch (err3) { freshEntries = []; }
-        const retryEntries = catalogGuardMergedEntries(
-          snapshot.entries, freshEntries);
+        const retryEntries = catalogCollapseDuplicateEntries(
+          catalogGuardMergedEntries(
+            snapshot.entries, freshEntries), freshEntries);
         retryEntriesText = JSON.stringify(retryEntries);
         retryText = JSON.stringify({
           version: snapshot.version,

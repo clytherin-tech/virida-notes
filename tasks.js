@@ -2424,6 +2424,8 @@ function resetCatalogRuntimeState() {
   /* v2.121: the Doc entry stash and the Doc module's
      status reset with the rest of the runtime state. */
   lastCatalogDocEntries = [];
+  /* v2.207: the file hints reset with the stash. */
+  lastCatalogFileHints = Object.create(null);
   resetDocNotesState();
   pendingIncoming = null;
   incomingProcessedToken = null;
@@ -2445,6 +2447,48 @@ function catalogFallbackSignal(message) {
   const err = new Error(message);
   err.catalogFallback = true;
   return err;
+}
+
+/* v2.207: duplicate file resolution, shared by both load
+   paths. Two live files can carry the same note id (a
+   Docs-era frozen fallback left in the notebook a note
+   was created in, beside the live file in the notebook
+   it later moved to: the store shape the storage switch
+   migration left behind for eleven notes, whose loads
+   then rebuilt a duplicate catalog row per file on
+   every open). A note id is the unit of identity, so
+   exactly one of the files stands as the note and the
+   other is skipped as an orphan. The winner, in order:
+   the file the catalog entry for that id names (its
+   fileId), else the file standing in the notebook the
+   catalog entry names, else the most recently modified
+   file; a full tie keeps the file already held. The
+   hints map is keyed collection + "|" + id with catalog
+   entries as values (the reconcile's entriesByKey, the
+   classic load's lastCatalogFileHints); a side with no
+   hint simply cannot win on that rule. Candidates are
+   { id, collection, slug, entry } with the listing
+   entry carrying fileId and modifiedTime. Returns true
+   when the candidate displaces the held file. */
+function duplicateFileCandidateBeats(hints, held, cand) {
+  const heldHint = hints[held.collection + "|" + held.id] || null;
+  const candHint = hints[cand.collection + "|" + cand.id] || null;
+  const heldNamed = !!(heldHint &&
+    heldHint.fileId === held.entry.fileId);
+  const candNamed = !!(candHint &&
+    candHint.fileId === cand.entry.fileId);
+  if (candNamed !== heldNamed) { return candNamed; }
+  const heldInNamedNb = !!(heldHint &&
+    held.collection === "notebook" && heldHint.notebook &&
+    heldHint.notebook === held.slug);
+  const candInNamedNb = !!(candHint &&
+    cand.collection === "notebook" && candHint.notebook &&
+    candHint.notebook === cand.slug);
+  if (candInNamedNb !== heldInNamedNb) { return candInNamedNb; }
+  const heldMt = held.entry.modifiedTime || "";
+  const candMt = cand.entry.modifiedTime || "";
+  if (candMt !== heldMt) { return candMt > heldMt; }
+  return false;
 }
 
 /* v2.122: the load's listings already carry every child's
@@ -2496,8 +2540,11 @@ function docLiveTokenMap(listings) {
    when this session already holds that note's body at the
    listing's token; everything else downloads only its own body,
    exactly as the classic load does. Falls back (via
-   catalogFallbackSignal) on a malformed entry or a duplicate
-   note id in the listings. */
+   catalogFallbackSignal) on a malformed entry. A duplicate
+   note id in the listings no longer falls back (v2.207):
+   it resolves to the one file the catalog names, through
+   duplicateFileCandidateBeats above, and the other file
+   is skipped as an orphan. */
 /* v2.146: the outside Doc change bumps this load
    judged, by note id: the live modified time the
    shell's updated stamp was raised to, and the stamp
@@ -2536,6 +2583,11 @@ async function reconcileCatalogListings(catalog, listings) {
     (list || []).forEach(function (note) { prevById[note.id] = note; });
   });
   const seenIds = Object.create(null);
+  /* v2.207: the file each taken id currently stands
+     on, so a second file carrying the same id can be
+     judged against it (see duplicateFileCandidateBeats
+     above): { collection, slug, entry, listName, note }. */
+  const takenFiles = Object.create(null);
   const out = { notes: [], trash: [], archive: [] };
   /* v2.175: the note ids this device's pending
      deletions record still owes storage deletions
@@ -2626,17 +2678,46 @@ async function reconcileCatalogListings(catalog, listings) {
       if (docClaims[claimKey] ||
           (collection === "notebook" &&
            docNotebookIds[fallbackId])) {
-        if (claimedIds[fallbackId]) {
-          throw catalogFallbackSignal(
-            "A note id appears twice in the store: " +
-            fallbackId);
-        }
+        /* v2.207: a claimed id listed twice is the same
+           stray duplicate shape as the file case below
+           (two fallback files for one Doc-backed note,
+           left across a move): both files are the note's
+           fallback, never the note, so a second sighting
+           is skipped like the first and the Doc pass
+           judges the id, instead of abandoning the
+           catalog over it. */
         claimedIds[fallbackId] = true;
         continue;
       }
       if (seenIds[fallbackId]) {
-        throw catalogFallbackSignal(
-          "A note id appears twice in the store: " + fallbackId);
+        /* v2.207: a second file carrying an id already
+           taken. Through v2.206 this threw the fallback
+           signal, the classic load rebuilt one note per
+           file, and the catalog writer persisted both
+           rows, so the duplicates returned on every
+           load. Now the pair resolves to exactly one
+           winner (duplicateFileCandidateBeats): when
+           this file wins, the note the held file
+           produced is withdrawn and this file is taken
+           in its place below; when it loses, it is
+           skipped as an orphan. A held id with no taken
+           file (the first file vanished mid load) is
+           simply taken here. */
+        const heldFile = takenFiles[fallbackId];
+        if (heldFile) {
+          if (!duplicateFileCandidateBeats(entriesByKey,
+              { id: fallbackId,
+                collection: heldFile.collection,
+                slug: heldFile.slug, entry: heldFile.entry },
+              { id: fallbackId, collection: collection,
+                slug: slug, entry: entry })) {
+            continue;
+          }
+          const heldList = out[heldFile.listName];
+          const heldIndex = heldList.indexOf(heldFile.note);
+          if (heldIndex >= 0) { heldList.splice(heldIndex, 1); }
+          delete takenFiles[fallbackId];
+        }
       }
       seenIds[fallbackId] = true;
       const path = collection === "notebook"
@@ -2661,6 +2742,10 @@ async function reconcileCatalogListings(catalog, listings) {
         note.sha = entry.token;
         note.fileId = entry.fileId;
         out[listName].push(note);
+        takenFiles[fallbackId] = {
+          collection: collection, slug: slug, entry: entry,
+          listName: listName, note: note
+        };
       } else {
         const file = await storeGetFile(path);
         if (!file) { continue; }   /* vanished mid load, as before */
@@ -2672,6 +2757,10 @@ async function reconcileCatalogListings(catalog, listings) {
         }
         note.fileId = entry.fileId;
         out[listName].push(note);
+        takenFiles[fallbackId] = {
+          collection: collection, slug: slug, entry: entry,
+          listName: listName, note: note
+        };
       }
     }
   }
@@ -2864,6 +2953,43 @@ async function loadListingsClassic(listings) {
      into state on this device (see
      reconcileCatalogListings). */
   const pendingIds = pendingDeleteIds();
+  /* v2.207: duplicate file resolution, the same rule
+     the reconcile applies (see
+     duplicateFileCandidateBeats): a second file
+     carrying an id already loaded resolves to exactly
+     one winner, judged against the catalog read's
+     file hints (lastCatalogFileHints), and the loser
+     is skipped; when the new file wins, the note the
+     held file produced is withdrawn first. Through
+     v2.206 this load built one note object per file,
+     so a stray duplicate file became a second note
+     in state and a second catalog row on the next
+     write. */
+  const takenFiles = Object.create(null);
+  function classicTakeWinner(fallbackId, collection, slug,
+      entry, listName) {
+    const heldFile = takenFiles[fallbackId];
+    if (!heldFile) { return true; }
+    if (!duplicateFileCandidateBeats(lastCatalogFileHints,
+        { id: fallbackId, collection: heldFile.collection,
+          slug: heldFile.slug, entry: heldFile.entry },
+        { id: fallbackId, collection: collection,
+          slug: slug, entry: entry })) {
+      return false;
+    }
+    const heldList = out[heldFile.listName];
+    const heldIndex = heldList.indexOf(heldFile.note);
+    if (heldIndex >= 0) { heldList.splice(heldIndex, 1); }
+    delete takenFiles[fallbackId];
+    return true;
+  }
+  function classicRecordTaken(fallbackId, collection, slug,
+      entry, listName, note) {
+    takenFiles[fallbackId] = {
+      collection: collection, slug: slug, entry: entry,
+      listName: listName, note: note
+    };
+  }
   for (const nb of state.notebooks) {
     const entries = listings.notebooks[nb.slug];
     for (const entry of (entries || [])) {
@@ -2877,6 +3003,9 @@ async function loadListingsClassic(listings) {
       if (classicDocClaimed("notebook", nb.slug, fallbackId)) {
         continue;
       }
+      /* v2.207: one file per note id (see above). */
+      if (!classicTakeWinner(fallbackId, "notebook", nb.slug,
+          entry, "notes")) { continue; }
       const file = await storeGetFile(
         "notebooks/" + nb.slug + "/" + entry.name);
       if (!file) { continue; }
@@ -2885,6 +3014,8 @@ async function loadListingsClassic(listings) {
       if (!note.notebook) { note.notebook = nb.slug; }
       note.fileId = entry.fileId;
       out.notes.push(note);
+      classicRecordTaken(fallbackId, "notebook", nb.slug,
+        entry, "notes", note);
     }
   }
   const trashEntries = listings.trash;
@@ -2897,12 +3028,17 @@ async function loadListingsClassic(listings) {
     if (classicDocClaimed("trash", null, fallbackId)) {
       continue;
     }
+    /* v2.207: one file per note id (see above). */
+    if (!classicTakeWinner(fallbackId, "trash", null,
+        entry, "trash")) { continue; }
     const file = await storeGetFile("trash/" + entry.name);
     if (!file) { continue; }
     bootCountNoteDownload();   /* v2.21: the boot report's count */
     const note = parseNoteFile(file.text, file.token, fallbackId, true);
     note.fileId = entry.fileId;
     out.trash.push(note);
+    classicRecordTaken(fallbackId, "trash", null,
+      entry, "trash", note);
   }
   /* v1.5: the archive folder loads exactly like the trash folder.
      Stores created before archiving have no archive folder at all;
@@ -2919,6 +3055,9 @@ async function loadListingsClassic(listings) {
     if (classicDocClaimed("archive", null, fallbackId)) {
       continue;
     }
+    /* v2.207: one file per note id (see above). */
+    if (!classicTakeWinner(fallbackId, "archive", null,
+        entry, "archive")) { continue; }
     const file = await storeGetFile("archive/" + entry.name);
     if (!file) { continue; }
     bootCountNoteDownload();   /* v2.21: the boot report's count */
@@ -2926,6 +3065,8 @@ async function loadListingsClassic(listings) {
       false, true);
     note.fileId = entry.fileId;
     out.archive.push(note);
+    classicRecordTaken(fallbackId, "archive", null,
+      entry, "archive", note);
   }
   return out;
 }
@@ -2962,6 +3103,18 @@ async function loadListingsClassic(listings) {
    Cleared with the rest of the catalog runtime state. */
 let lastCatalogDocEntries = [];
 
+/* v2.207: the file hints, built from the same catalog
+   read as the Doc stash: every entry (any backend) that
+   names a file, keyed collection + "|" + id. The
+   classic load has no catalog of its own to judge a
+   duplicate file pair by, so it resolves winners
+   against these hints exactly as the reconcile
+   resolves them against its entries (see
+   duplicateFileCandidateBeats). Built wherever the
+   Doc stash is built, from any parseable catalog, and
+   reset with it. */
+let lastCatalogFileHints = Object.create(null);
+
 /* v2.121: the Doc entry stash, built from one catalog's
    entries (see the declaration of lastCatalogDocEntries
    above). v2.142: lifted out of readCatalogForLoad so a
@@ -2969,7 +3122,21 @@ let lastCatalogDocEntries = [];
    rebuilds the stash exactly as a fresh read does. */
 function buildCatalogDocStash(entries) {
   lastCatalogDocEntries = [];
+  /* v2.207: the file hints ride the same build (see
+     lastCatalogFileHints above): every entry naming a
+     file is recorded, whatever its backend, under the
+     same normalized collection the stash uses. */
+  lastCatalogFileHints = Object.create(null);
   (entries || []).forEach(function (entry) {
+    if (entry && typeof entry === "object" &&
+        typeof entry.id === "string" && entry.id &&
+        typeof entry.fileId === "string" && entry.fileId) {
+      const hintCollection = entry.collection === "trash" ||
+        entry.collection === "archive"
+        ? entry.collection : "notebook";
+      lastCatalogFileHints[hintCollection + "|" + entry.id] =
+        entry;
+    }
     if (!entry || typeof entry !== "object" ||
         entry.backend !== "doc" ||
         typeof entry.id !== "string" || !entry.id ||
@@ -2991,6 +3158,7 @@ function buildCatalogDocStash(entries) {
 async function readCatalogForLoad() {
   let catalog = null;
   lastCatalogDocEntries = [];
+  lastCatalogFileHints = Object.create(null);
   try {
     const catalogFile = await storeGetFile(CATALOG_FILE);
     if (catalogFile) {
@@ -4777,9 +4945,77 @@ async function adoptStoredRevisionIfContentEqual(note, path, saveFacts,
   const stored = parseNoteFile(fresh.text, fresh.token, note.id,
     note.trashed, note.archived);
   if (!noteContentEquivalent(stored, note)) { return null; }
-  note.sha = fresh.token;
+  stampLiveNoteSha(note, fresh.token);   /* v2.207 */
   const versionStatus = await finishLandedNoteSave(note, path, saveFacts);
   return { saved: true, adopted: true, versionStatus: versionStatus };
+}
+
+/* v2.207: the fourth adoption test's machinery. The
+   link preview enrichment (editor.js maybeFetchLinkInfo)
+   decorates an anchor with data-ss-link-title,
+   data-ss-link-desc, data-ss-link-image and
+   data-ss-link-logo attributes and the anchor title
+   the card shows; a session whose own earlier save
+   landed the bare anchor and whose next save carries
+   the enriched one (the enrichment fetch resolving
+   between the two saves) differs from the stored
+   revision by exactly those attributes and nothing
+   else. Stripping them from both bodies and comparing
+   the rest, with every other content field held to the
+   same standard the equality tests hold, separates
+   that shape from a genuine divergence: any real word,
+   tag, or record difference still fails the test and
+   forks as before. Both bodies pass through the same
+   DOM round trip, so the comparison is symmetric; a
+   body that cannot be walked this way simply fails
+   the test, the safe direction. */
+function bodyModuloLinkEnrichment(body) {
+  const holder = document.createElement("div");
+  holder.innerHTML = typeof body === "string" ? body : "";
+  const anchors = holder.querySelectorAll("a");
+  for (let i = 0; i < anchors.length; i++) {
+    anchors[i].removeAttribute("data-ss-link-title");
+    anchors[i].removeAttribute("data-ss-link-desc");
+    anchors[i].removeAttribute("data-ss-link-image");
+    anchors[i].removeAttribute("data-ss-link-logo");
+    anchors[i].removeAttribute("title");
+  }
+  return holder.innerHTML;
+}
+
+function noteContentEqualModuloLinkEnrichment(a, b) {
+  if (!a || !b) { return false; }
+  return a.title === b.title &&
+    JSON.stringify(a.tags || []) === JSON.stringify(b.tags || []) &&
+    JSON.stringify(sanitizeAttachments(a.attachments || [])) ===
+      JSON.stringify(sanitizeAttachments(b.attachments || [])) &&
+    !!a.pinned === !!b.pinned &&
+    (a.thumbnail || null) === (b.thumbnail || null) &&
+    (a.reminderAt || null) === (b.reminderAt || null) &&
+    (a.reminderDoneAt || null) === (b.reminderDoneAt || null) &&
+    bodyModuloLinkEnrichment(a.body) ===
+      bodyModuloLinkEnrichment(b.body);
+}
+
+/* The stored side of the fourth test, fetched and
+   parsed exactly as the third test fetches it; the
+   candidate is the save's own candidateContent, the
+   same content the first three tests judge. */
+async function noteContentMatchesStoredModuloEnrichment(note,
+    path, saveFacts, prefetched) {
+  let fresh = prefetched || null;
+  if (!fresh) {
+    try {
+      fresh = await storeGetFile(path);
+    } catch (err) {
+      return false;
+    }
+  }
+  if (!fresh) { return false; }
+  const stored = parseNoteFile(fresh.text, fresh.token, note.id,
+    note.trashed, note.archived);
+  return noteContentEqualModuloLinkEnrichment(stored,
+    saveFacts.candidateContent);
 }
 
 /* v2.22: the baseline test's predicate, in the saveFacts
@@ -4859,7 +5095,18 @@ async function noteContentMatchesVersionHistory(noteId, candidate) {
        grew from it or past it, and this session's copy of
        it carries no unique work either. Adopt silently.
    (3) the v2.19 content equality adoption, unchanged.
-   Only when all three say no does the caller run the
+   (4) v2.207: the enrichment test: the stored content
+       and the candidate differ only in app-generated
+       link preview enrichment attributes (the
+       data-ss-link-* set and the anchor title the card
+       shows), the residue of this session's own two
+       saves landing around the enrichment fetch (the
+       2026-11-22 PDF checklist incident: the first
+       save's canonical re-serialization landed, the
+       enrichment save then judged it an outside
+       divergence and forked). Adopt silently; any
+       real content difference still fails this test.
+   Only when all four say no does the caller run the
    genuine rule (one copy, the mark, the pause).
    Adoption here means: the freshly fetched stored file's
    revision becomes note.sha, the note object itself takes
@@ -4898,8 +5145,21 @@ async function adoptStoredRevisionOnMismatch(note, path, saveFacts,
       note.id, saveFacts.candidateContent);
   }
   if (!contributedNothing && !matchesAncestor) {
-    return adoptStoredRevisionIfContentEqual(note, path, saveFacts,
-      prefetched);
+    const contentEqual = await adoptStoredRevisionIfContentEqual(
+      note, path, saveFacts, prefetched);
+    if (contentEqual) { return contentEqual; }
+    /* v2.207: the fourth test (see the chain comment
+       above): a stored revision differing from the
+       candidate only in app-generated link preview
+       enrichment is this session's own work, not an
+       outside divergence, and adopts below like the
+       other silent cases. When it does not hold, the
+       divergence stands and the caller runs the
+       genuine rule. */
+    const enrichmentOnly = await
+      noteContentMatchesStoredModuloEnrichment(note, path,
+        saveFacts, prefetched);
+    if (!enrichmentOnly) { return null; }
   }
   let fresh = prefetched || null;
   if (!fresh) {
@@ -4912,7 +5172,7 @@ async function adoptStoredRevisionOnMismatch(note, path, saveFacts,
   if (!fresh) { return null; }
   const stored = parseNoteFile(fresh.text, fresh.token, note.id,
     note.trashed, note.archived);
-  note.sha = fresh.token;
+  stampLiveNoteSha(note, fresh.token);   /* v2.207 */
   /* Whether the open editor still shows exactly the
      adjudicated content decides the refill below, so it is
      read BEFORE the model swap (the swap does not touch the
@@ -5140,6 +5400,35 @@ function reconcileNoteAttachments(note) {
     reconcileAttachmentFields(baseline, baseline.body, note.id);
   }
   return changed;
+}
+
+/* v2.207: the live note object is the save's truth for
+   its revision token, the same lesson the v2.75 live
+   attachment pair taught for attachment records: a save
+   can be handed a note object that is not the object
+   state holds (a queued operation's snapshot, a shell
+   the loader swapped), and a token read off the handed
+   object can lag the revision the session itself just
+   landed, so the decision chain weighs the session's
+   own latest write as an outside divergence and forks
+   a false conflict copy. Reads and stamps therefore
+   resolve the live object by id first and fall back to
+   the handed object only when state holds none. */
+function liveNoteSha(note) {
+  if (note && note.id) {
+    const live = findNoteById(note.id);
+    if (live && live.sha) { return live.sha; }
+  }
+  return (note && note.sha) || null;
+}
+
+function stampLiveNoteSha(note, sha) {
+  if (!note) { return; }
+  note.sha = sha;
+  if (note.id) {
+    const live = findNoteById(note.id);
+    if (live && live !== note) { live.sha = sha; }
+  }
 }
 
 async function saveNoteToRepoNow(note, options) {
@@ -5393,7 +5682,12 @@ async function saveNoteToRepoNow(note, options) {
   }
 
   try {
-    let shaToUse = note.sha || null;
+    /* v2.207: the base revision is read off the live
+       note object, not the handed one (see liveNoteSha
+       above), so a save chained behind this session's
+       own previous save never judges that save as an
+       outside divergence. */
+    let shaToUse = liveNoteSha(note);
     if (shaToUse && !options.skipConflictCheck) {
       const fresh = await storeGetFile(path);
       if (fresh && fresh.token !== shaToUse) {
@@ -5433,7 +5727,7 @@ async function saveNoteToRepoNow(note, options) {
     const newSha = await storePutFile(path, text, shaToUse,
       (shaToUse ? "Update note " : "Create note ") + note.id,
       { fresh: !!options.fresh });
-    note.sha = newSha;
+    stampLiveNoteSha(note, newSha);   /* v2.207: the live object too */
     /* v2.8: the note write landed, so its history maintenance
        may run (inside finishLandedNoteSave, the landed tail
        this write and the v2.19 silent adoption share). */
@@ -6328,7 +6622,7 @@ async function saveLocalOverStoredRevision(note, path, text,
     }
     throw err;
   }
-  note.sha = newSha;
+  stampLiveNoteSha(note, newSha);   /* v2.207 */
   const versionStatus = await finishLandedNoteSave(note, path,
     saveFacts);
   /* The stored version also belongs in this note's own
