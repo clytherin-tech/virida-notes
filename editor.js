@@ -4854,9 +4854,10 @@ function createMentionTargetNote(title) {
   });
   if (!slug || !known) { slug = state.notebooks[0].slug; }
   const note = makeNote(slug, title);
-  /* v2.130: a newborn note, Doc-backed like every
-     newborn note (markNoteDocBacked in store.js). */
-  markNoteDocBacked(note);
+  /* v2.206: a newborn note, file-backed like every
+     newborn note (markNoteFileBacked in store.js); the
+     v2.130 Doc-backed birth rule is reversed. */
+  markNoteFileBacked(note);
   state.notes.unshift(note);
   saveCache();
   renderNoteList();

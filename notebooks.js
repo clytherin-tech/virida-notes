@@ -350,8 +350,10 @@ async function setNotebookStack(slug, stackName) {
    gone. Through v2.129 a notebook record could carry a
    docStore field routing its new notes to Google Docs;
    the library conversion finished on November 11,
-   2026, and every notebook now stores new notes as
-   Google Docs (markNoteDocBacked in store.js), so
+   2026, and every notebook stored new notes as
+   Google Docs until v2.206, whose storage switch
+   returns new notes to note files
+   (markNoteFileBacked in store.js), so
    there is nothing left for a switch to decide. A
    stored field, where an index still carries one, is
    ignored everywhere: the index writer drops it

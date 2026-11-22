@@ -13543,13 +13543,14 @@ async function addStarterNoteFromSettings() {
     return nb.slug === "personal";
   }) ? "personal" : state.notebooks[0].slug;
   const note = makeStarterNote(slug);
-  /* v2.130: a newborn note, Doc-backed like every
-     newborn note (markNoteDocBacked in store.js). The
+  /* v2.206: a newborn note, file-backed like every
+     newborn note (markNoteFileBacked in store.js); the
+     v2.130 Doc-backed birth rule is reversed. The
      store seeder's starter note is the one exception:
      seeding writes through the neutral store layer
      before any Doc machinery can run, so the seeded
      starter keeps the file form it is written with. */
-  markNoteDocBacked(note);
+  markNoteFileBacked(note);
   state.notes.unshift(note);
   saveCache();
   renderAll();

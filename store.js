@@ -312,7 +312,7 @@ function isDocBackedNote(note) {
   return !!note && note.backend === "doc";
 }
 
-/* v2.130: every note born into a notebook is Doc-backed.
+/* v2.206: every note born into a notebook is file-backed.
    The create flows (the New Note button, templates,
    duplicate, merge, the table of contents, the file and
    Word imports, the drop box, the scratch pad, save
@@ -320,17 +320,22 @@ function isDocBackedNote(note) {
    Settings starter note) mark their newborn note
    through this one helper, so the backend decision
    stands in exactly one shape everywhere: backend
-   "doc", no Doc id yet (the first save creates the Doc;
-   see saveDocBackedNote in tasks.js). A note whose Doc
-   cannot be created stays Doc-backed and unsaved,
-   never a file note by fallback: the failure surfaces
-   through the create flow's own toast, and the next
-   save retries the Doc. File-backed notes still exist
-   (notes loaded from note files, and notes restored
-   from Trash or Archive, which keep the file form they
-   were written out with); they are simply never born. */
-function markNoteDocBacked(note) {
-  note.backend = "doc";
+   "file", no Doc id. This reverses the v2.130 rule it
+   replaces (every newborn Doc-backed, the first save
+   creating its Doc): the storage switch of 2026-11-22
+   returns live storage to the app's own HTML note
+   files, whose stored bytes are the displayed bytes,
+   with checklist ticks and link cards carried in the
+   body itself instead of re-matched against a Doc on
+   every open. Doc-backed notes still exist (the live
+   notes the switch migrates one at a time, through
+   migrateNoteToFileBacked in tasks.js); they are
+   simply never born. A newborn's first save writes
+   its note file exactly as file notes always saved;
+   there is no fallback question left, because the
+   file form is the only birth form. */
+function markNoteFileBacked(note) {
+  note.backend = "file";
   note.docId = null;
   return note;
 }

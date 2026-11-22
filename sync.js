@@ -640,6 +640,26 @@ function saveCatalog() {
    silent loss. A store
    with no catalog yet reads as no stored entries, and
    the write proceeds unmerged. */
+/* v2.206: the one sanctioned downgrade. The comment
+   above says no app flow turns a notebook entry from
+   Doc-backed to file-backed; the storage switch's
+   migrate action (migrateNoteToFileBacked in
+   tasks.js) is now that flow, and it registers the
+   note's id here before it flips the entry, so this
+   guard lets exactly that entry stand in its file
+   form and keeps merging every other downgrade back
+   to the stored Doc fields exactly as before. The
+   sanction is this session's only and is never
+   persisted: another session's catalog writes still
+   merge the entry back, which is the standing
+   protection, and the switch's freeze window (every
+   other session closed) is what makes a migration
+   stick. */
+const catalogGuardSanctionedDowngrades = {};
+function sanctionCatalogDowngrade(noteId) {
+  if (noteId) { catalogGuardSanctionedDowngrades[noteId] = true; }
+}
+
 function catalogGuardMergedEntries(localEntries, storedEntries) {
   if (!Array.isArray(storedEntries) ||
       !storedEntries.length) {
@@ -657,6 +677,9 @@ function catalogGuardMergedEntries(localEntries, storedEntries) {
     return localEntries;
   }
   return localEntries.map(function (entry) {
+    if (entry && catalogGuardSanctionedDowngrades[entry.id]) {
+      return entry;
+    }
     if (!entry || entry.collection !== "notebook" ||
         entry.backend === "doc") {
       return entry;

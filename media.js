@@ -15998,7 +15998,7 @@ async function fileWebClipChoices(payload, choices) {
     titleText || payload.title ||
       defaultTitleFromText(plainTextFromHtml(
         cleanResult.html)), "");
-  markNoteDocBacked(note);
+  markNoteFileBacked(note);
   note.tags = choices.tags || [];
   let shotAtt = null;
   if (choices.shotDataUrl) {

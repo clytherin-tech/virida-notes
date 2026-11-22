@@ -889,12 +889,12 @@ function titleFromFileName(name) {
    means the first version ever persisted is the finished one. */
 function createImportedNote(notebookSlug, title, bodyHtml, options) {
   const note = makeNote(notebookSlug, title, bodyHtml);
-  /* v2.130: an imported note is a note born into a
-     notebook, so it is Doc-backed like every newborn
-     note (markNoteDocBacked in store.js): the create
-     save below, held or not, writes it into a new
-     Google Doc through the Doc save path. */
-  markNoteDocBacked(note);
+  /* v2.206: an imported note is a note born into a
+     notebook, so it is file-backed like every newborn
+     note (markNoteFileBacked in store.js): the create
+     save below, held or not, writes its note file
+     through the file save path. */
+  markNoteFileBacked(note);
   state.notes.unshift(note);
   saveCache();
   renderAll();

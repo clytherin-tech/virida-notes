@@ -2278,16 +2278,17 @@ async function processIncomingBox() {
     parsed.archivedFrom = null;
     parsed.sha = null;
     parsed.fileId = null;
-    /* v2.130: a drop box import is a note born into its
-       notebook, so it is Doc-backed like every newborn
-       note: the save below creates its Google Doc
-       through the same upload path a typed note takes.
+    /* v2.206: a drop box import is a note born into its
+       notebook, so it is file-backed like every newborn
+       note: the save below writes its note file through
+       the same path a typed note takes. (v2.130 made it
+       Doc-backed; the storage switch reverses that.)
        A stored attachment figure rides the Doc save's
        own figure handling (docBuildUploadHtml embeds
        it in the Doc); a figure that cannot ride crosses
        as its Drive link, the conversion design's
        fallback, and the import still completes. */
-    markNoteDocBacked(parsed);
+    markNoteFileBacked(parsed);
     parsed.bodyLoaded = true;
     if (attItems && attItems.length) {
       const attResult = await importDropboxAttachments(parsed, attItems);
@@ -5182,6 +5183,31 @@ async function saveNoteToRepoNow(note, options) {
     setSyncPill("bad", "Conflict saved");
     return { paused: true, diverged: true };
   }
+  /* v2.206: the stale-session backend guard (storage
+     switch spec, risk list). If the stored catalog now
+     holds this note under a different backend than the
+     copy this session loaded (the note was migrated to
+     file storage while this session stood open), this
+     save must not land: a Doc-era copy writing now
+     would lay its body over the migrated note through
+     the wrong channel. The save pauses with the fact
+     stated and the editor's in-memory content left
+     exactly as it stands, the same shape as the
+     divergence pause above. A failed catalog read
+     never blocks a save (the catalog writer carries
+     its own stored-read guard), and a note with no
+     stored entry (a newborn) is never judged. Flows
+     that legitimately flip a backend (Trash, Archive,
+     the migrate action) write through their own paths,
+     never this funnel, so no exemption is owed here. */
+  if (!options.skipConflictCheck &&
+      await noteBackendChangedInStore(note)) {
+    setSyncPill("bad", "Storage changed");
+    toast("This note's storage changed while it was open " +
+      "here, so this copy was not saved. Reopen the note " +
+      "to keep editing it.", true);
+    return { paused: true, backendChanged: true };
+  }
   /* v2.169: a Doc-backed catalog shell whose save
      reaches here can only be carrying catalog facts
      (a title, tags, a pin, a notebook move): a shell
@@ -5481,6 +5507,193 @@ async function saveNoteToRepoNow(note, options) {
     }
     throw err;
   }
+}
+
+/* v2.206: whether the stored catalog holds this note
+   under a different backend than this session's copy
+   carries. Reads the stored entries through the
+   catalog writer's own reader; any failure, a missing
+   entry, or an unusable value answers false (see the
+   guard in saveNoteToRepoNow for why a failed read
+   never blocks a save). */
+async function noteBackendChangedInStore(note) {
+  if (!note || !note.id) { return false; }
+  let entries;
+  try {
+    entries = await readStoredCatalogEntries();
+  } catch (err) {
+    return false;
+  }
+  if (!Array.isArray(entries)) { return false; }
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry && entry.id === note.id) {
+      const stored = entry.backend === "doc" ? "doc" : "file";
+      const mine = isDocBackedNote(note) ? "doc" : "file";
+      return stored !== mine;
+    }
+  }
+  return false;
+}
+
+/* ------------------------------------------------------------------
+   v2.206: the storage switch's migrate action. DARK:
+   nothing in the app calls this; it is run deliberately,
+   one note at a time, from a maintenance session during
+   the switch's cutover window. It implements the spec's
+   per-note migration (section 3 of
+   storage-switch-spec-2026-11-22.md): read the note
+   through the standing load path (the Doc conversion,
+   the tick memory's application, and the card dressing
+   all happen inside it, so the body it returns already
+   carries its ticks and cards in its markup), write the
+   note file in the standing file format, verify the
+   written bytes parse back to the same counts the
+   source body carries, and only then flip the catalog
+   entry, with the old Doc id and the counts preserved
+   in the migration log. The Google Doc is never
+   modified or deleted. A note that fails any step
+   stays Doc-backed and is reported in the return value
+   and the log, never forced.
+   ------------------------------------------------------------------ */
+const STORAGE_MIGRATION_LOG_FILE = "storage-migration-log.json";
+
+async function appendStorageMigrationLog(record) {
+  let log = [];
+  try {
+    const existing = await storeGetFile(STORAGE_MIGRATION_LOG_FILE);
+    if (existing && existing.text) {
+      const parsed = JSON.parse(existing.text);
+      if (Array.isArray(parsed)) { log = parsed; }
+    }
+  } catch (err) { /* a first or unreadable log starts fresh below */ }
+  log.push(record);
+  await storePutFile(STORAGE_MIGRATION_LOG_FILE,
+    JSON.stringify(log, null, 2), null, "Storage migration log");
+}
+
+/* The counts the verify step compares, taken from a
+   body the same way for the source and the written
+   form, so the comparison is apples to apples. */
+function migrationBodyCounts(html) {
+  const div = document.createElement("div");
+  div.innerHTML = html || "";
+  const boxes = div.querySelectorAll("input[type=\"checkbox\"]");
+  let checked = 0;
+  for (let i = 0; i < boxes.length; i++) {
+    if (boxes[i].checked) { checked += 1; }
+  }
+  return {
+    paragraphs: div.querySelectorAll(
+      "p, h1, h2, h3, h4, h5, h6, blockquote, pre, table").length,
+    listItems: div.querySelectorAll("li").length,
+    checklistItems: boxes.length,
+    checklistChecked: checked,
+    cards: div.querySelectorAll("a[data-ss-link-view]").length,
+    images: div.querySelectorAll("img").length,
+    textLength: htmlToText(html || "").length
+  };
+}
+
+function migrationCountsEqual(a, b) {
+  const keys = Object.keys(a);
+  for (let i = 0; i < keys.length; i++) {
+    if (a[keys[i]] !== b[keys[i]]) { return false; }
+  }
+  return true;
+}
+
+async function migrateNoteToFileBacked(noteOrId) {
+  const note = (typeof noteOrId === "string")
+    ? (state.notes.concat(state.trash, state.archive).find(
+        function (n) { return n.id === noteOrId; }) || null)
+    : noteOrId;
+  const record = { at: new Date().toISOString(),
+    noteId: note ? note.id : String(noteOrId || ""),
+    title: note ? (note.title || "") : "", migrated: false };
+  async function fail(reason) {
+    record.reason = reason;
+    try { await appendStorageMigrationLog(record); } catch (err) { }
+    return record;
+  }
+  if (!note) { return fail("note not found in this session"); }
+  if (!isDocBackedNote(note)) {
+    return fail("note is not Doc-backed");
+  }
+  if (note.trashed || note.archived) {
+    return fail("note is in Trash or Archive");
+  }
+  if (typeof state !== "undefined" && state.selectedId === note.id) {
+    return fail("note is open in this session");
+  }
+  const oldDocId = sanitizeDocId(note.docId);
+  if (!oldDocId) { return fail("note has no usable Doc id"); }
+  record.docId = oldDocId;
+  /* Source read, through the standing load path. */
+  await ensureNoteBodyLoaded(note);
+  if (note.bodyLoaded === false) {
+    return fail("the note's body could not be loaded");
+  }
+  const sourceCounts = migrationBodyCounts(note.body);
+  const sourceAttachmentIds = (note.attachments || []).map(
+    function (a) { return a && a.id; }).filter(Boolean).sort();
+  record.sourceCounts = sourceCounts;
+  /* Flip the pair on the note object, on the trash
+     rule: the file this becomes carries its ticks and
+     cards in its body, so the sidecar tick memory
+     leaves with the backend. */
+  const oldTicks = note.docTicks;
+  note.backend = "file";
+  note.docId = null;
+  note.docTicks = null;
+  note.docName = undefined;
+  note.fileId = null;
+  note.sha = null;
+  const path = notePath(note);
+  const text = serializeNote(note);
+  /* Verify the exact bytes before they are written:
+     they must parse back to the source's counts and
+     attachment set. */
+  const parsed = parseNoteFile(text, null, note.id, false, false);
+  const writtenCounts = migrationBodyCounts(parsed.body);
+  const writtenAttachmentIds = (parsed.attachments || []).map(
+    function (a) { return a && a.id; }).filter(Boolean).sort();
+  record.writtenCounts = writtenCounts;
+  if (!migrationCountsEqual(sourceCounts, writtenCounts) ||
+      JSON.stringify(sourceAttachmentIds) !==
+        JSON.stringify(writtenAttachmentIds)) {
+    note.backend = "doc"; note.docId = oldDocId;
+    note.docTicks = oldTicks;
+    return fail("the written form does not match the source counts");
+  }
+  try {
+    note.sha = await storePutFile(path, text, null,
+      "Migrate note to file storage");
+  } catch (err) {
+    note.backend = "doc"; note.docId = oldDocId;
+    note.docTicks = oldTicks;
+    return fail("the note file write failed: " + err.message);
+  }
+  /* Re-read what landed and compare bytes: the stored
+     file must be the verified text, whole. */
+  let landed = null;
+  try { landed = await storeGetFile(path); } catch (err) { }
+  if (!landed || landed.text !== text) {
+    /* The file stands written but unproven; the catalog
+       stays Doc-backed (the note still opens from its
+       Doc) and the log says so, loudly. */
+    return fail("the written file did not read back identical");
+  }
+  /* Flip the catalog entry: sanction this one downgrade
+     with the catalog guard, then let the standing
+     catalog write carry the file form. */
+  sanctionCatalogDowngrade(note.id);
+  saveCache();
+  await flushCatalogWrites();
+  record.migrated = true;
+  record.path = path;
+  try { await appendStorageMigrationLog(record); } catch (err) { }
+  return record;
 }
 
 /* v2.169: the catalog-only save of a Doc-backed
