@@ -7105,6 +7105,7 @@ function closeToolbarMenus() {
    the inline accordion open, since there the panel
    is part of the scrolling content itself. */
 function closeInsertSubmenus() {
+  cancelInsertSubmenuClose();
   document.querySelectorAll("#insertMenu .tb-submenu")
     .forEach(function (panel) {
       panel.classList.add("hidden");
@@ -7117,29 +7118,79 @@ function closeInsertSubmenus() {
     });
 }
 
+/* The gap hotfix: the close grace. Leaving a sub-menu row
+   no longer puts its panel away at once: the trip
+   from the row to the panel crosses the menu's own
+   padding and scrollbar strip, ground that belongs
+   to neither, and the instant close of v2.205.0 hid
+   the panel before a pointer at human speed could
+   arrive (Chris's field report, Nov 22, 2026). The
+   leave now starts a short timer instead; entering
+   the row again, or the panel itself (a child of the
+   row's wrap, so its entry re-fires the wrap's
+   mouseenter and the idempotent open below), cancels
+   it through closeInsertSubmenus, which every open
+   and every full close passes through. Moving away
+   for good still puts the panel away, one grace
+   after the leave. */
+const INSERT_SUBMENU_CLOSE_GRACE_MS = 300;
+let insertSubmenuCloseTimer = null;
+
+function cancelInsertSubmenuClose() {
+  if (insertSubmenuCloseTimer !== null) {
+    clearTimeout(insertSubmenuCloseTimer);
+    insertSubmenuCloseTimer = null;
+  }
+}
+
+function scheduleInsertSubmenuClose(panel, btn) {
+  cancelInsertSubmenuClose();
+  insertSubmenuCloseTimer = setTimeout(function () {
+    insertSubmenuCloseTimer = null;
+    panel.classList.add("hidden");
+    panel.style.left = "";
+    panel.style.top = "";
+    if (btn) { btn.setAttribute("aria-expanded", "false"); }
+  }, INSERT_SUBMENU_CLOSE_GRACE_MS);
+}
+
 /* Stand one sub-menu panel against the screen beside
    its menu, at the height of the row that opened it.
    The panel is already unhidden when this runs, so
    its rect is real geometry; with position:fixed the
    rect is viewport geometry, never the menu's
-   clipped paint. Horizontally the panel clears the
-   menu's own edge, not the row's: the row's right
-   edge stops short of the menu's border box, at the
-   menu's padding and its scrollbar, and a panel
-   starting there would tuck its first pixels under
-   that scrollbar. */
+   clipped paint. Horizontally the panel stands
+   against the menu's own edge, not the row's: the
+   row's right edge stops short of the menu's border
+   box, at the menu's padding and its scrollbar, and
+   a panel starting there would tuck its first pixels
+   under that scrollbar.
+   the gap hotfix: the panel OVERLAPS that edge by 4px
+   instead of standing 4px clear of it. The 4px
+   clearance of v2.205.0 was dead ground (Chris's
+   field report, Nov 22, 2026: a visible gap, and the
+   panel gone before a click could land): traveling
+   from a row to its panel crosses the menu's own
+   padding and scrollbar strip, which belongs to
+   neither the row nor the panel, and leaving the row
+   put the panel away at once. The overlap is inside
+   the panel's own border and padding, so no item
+   stands over the menu, and the close grace wired
+   with the sub-menus (scheduleInsertSubmenuClose)
+   covers the rest of the trip. The flip mirrors the
+   overlap on the menu's left. */
 function placeInsertSubmenu(panel, wrap) {
   if (!panel || !wrap) { return; }
   const row = wrap.getBoundingClientRect();
   const menu = panel.closest(".tb-menu");
   const edge = menu ? menu.getBoundingClientRect() : row;
-  let left = Math.round(edge.right + 4);
+  let left = Math.round(edge.right - 4);
   let top = Math.round(row.top - 7);
   panel.style.left = left + "px";
   panel.style.top = top + "px";
   const rect = panel.getBoundingClientRect();
   if (rect.right > window.innerWidth - 8) {
-    left = Math.round(edge.left - rect.width - 4);
+    left = Math.round(edge.left - rect.width + 4);
     if (left < 8) {
       left = Math.max(8,
         Math.round(window.innerWidth - rect.width - 8));
@@ -7958,10 +8009,12 @@ function wireToolbar() {
   /* v2.182: the Insert menu's sub-menus: a hover or a
      tap on a sub-menu's row flies its panel out (a tap
      never fires an insert; the row carries no
-     data-insert), leaving the row puts the panel away,
-     and Escape closes an open sub-menu before the menu
-     (the document level Escape below never sees the
-     press when a sub-menu took it). */
+     data-insert), leaving the row puts the panel away
+     (the gap hotfix: after a short close grace, so the trip
+     onto the panel can land), and Escape closes an
+     open sub-menu before the menu (the document level
+     Escape below never sees the press when a sub-menu
+     took it). */
   document.querySelectorAll("#insertMenu .tb-submenu-wrap").forEach(
     function (wrap) {
       const btn = wrap.querySelector(".tb-submenu-btn");
@@ -7974,8 +8027,14 @@ function wireToolbar() {
         openInsertSubmenu(panel);
       });
       wrap.addEventListener("mouseleave", function () {
-        panel.classList.add("hidden");
-        btn.setAttribute("aria-expanded", "false");
+        /* The gap hotfix: the leave starts the close grace
+           (scheduleInsertSubmenuClose), not an instant
+           hide: the pointer may be traveling across
+           the menu's padding and scrollbar strip onto
+           the panel, and entering the panel cancels
+           the close on its way through this wrap's
+           mouseenter. */
+        scheduleInsertSubmenuClose(panel, btn);
       });
     });
   document.getElementById("insertMenu").addEventListener("keydown",
