@@ -1833,6 +1833,137 @@ function clipStripFigureShell(body, id) {
   return removed ? holder.innerHTML : body;
 }
 
+/* v2.204: the clip preview caps, by the app's own
+   measures: the title by the web clipper's title measure
+   (WEBCLIP_MAX_TITLE_CHARS), the description by the IMDb
+   preview description measure (IMDB_FETCH_DESC_CAP), and
+   both addresses by the web clipper's URL measure
+   (WEBCLIP_MAX_URL_CHARS). The service (Worker v9) judges
+   a payload's preview by the same caps before carrying
+   it; the judge below judges the carried object again,
+   because the drop box is a shared surface and a marker
+   is honored only as far as it checks out. */
+const CLIP_PREVIEW_TITLE_CAP = 300;
+const CLIP_PREVIEW_DESC_CAP = 1200;
+const CLIP_PREVIEW_URL_CAP = 2048;
+
+/* v2.204: judge a clip entry's preview object and return
+   the cleaned data the dressing may use, or null. The
+   preview is the page's own metadata (its og:/twitter:
+   title, description, and image, read by the extension
+   at clip time), carried on the marker by the service
+   for a LINK-ONLY clip (no selection, Clip full
+   unchecked: the clip whose whole body is the source
+   line). The judgment is all or nothing, the clip shot
+   judge's discipline (clipShotRecord): the value must
+   be an object; its url a string of http(s) form under
+   the URL cap; each of title, description, and image,
+   when present, a string under its cap (an absent field
+   reads as empty); the image, when non-empty, of
+   http(s) form; and at least one of the three fields
+   non-empty, a card with nothing to show being no card.
+   Anything less returns null and the clip imports as
+   the plain link it also is. */
+function clipPreviewData(preview) {
+  if (!preview || typeof preview !== "object" ||
+      Array.isArray(preview)) {
+    return null;
+  }
+  if (typeof preview.url !== "string") { return null; }
+  const url = preview.url.trim();
+  if (!/^https?:\/\//i.test(url) ||
+      url.length > CLIP_PREVIEW_URL_CAP) {
+    return null;
+  }
+  const caps = {
+    title: CLIP_PREVIEW_TITLE_CAP,
+    description: CLIP_PREVIEW_DESC_CAP,
+    image: CLIP_PREVIEW_URL_CAP
+  };
+  const cleaned = { title: "", description: "", image: "" };
+  const keys = ["title", "description", "image"];
+  for (let i = 0; i < keys.length; i++) {
+    const value = preview[keys[i]];
+    if (value === undefined || value === null) { continue; }
+    if (typeof value !== "string") { return null; }
+    const trimmed = value.trim();
+    if (trimmed.length > caps[keys[i]]) { return null; }
+    cleaned[keys[i]] = trimmed;
+  }
+  if (cleaned.image &&
+      !/^https?:\/\//i.test(cleaned.image)) {
+    return null;
+  }
+  if (!cleaned.title && !cleaned.description &&
+      !cleaned.image) {
+    return null;
+  }
+  return {
+    title: cleaned.title,
+    description: cleaned.description,
+    image: cleaned.image,
+    url: url
+  };
+}
+
+/* v2.204: dress a link-only clip body's source link as a
+   Preview link, under a judged preview (clipPreviewData):
+   the anchor gains the Preview display mode and the
+   stored info fields, set the way the link info fetch
+   sets them (storeLinkInfoField: a field that is absent
+   stays absent), so the face the editor's decoration
+   builds for it is the standing preview card (the page's
+   cover image, its title, its description, the address
+   as the footer), and every surface that treats a
+   Preview link (the link bar, the View Link As menu, the
+   save funnel) treats this one as the ordinary preview
+   link it now is. The card is app furniture in the
+   standing way: the attributes live in the note's own
+   body, and the Google Doc the import creates carries
+   the plain link, exactly as it does for any pill.
+   The dressing is narrow on purpose. The link-only
+   shape is the filed one (the service's clipNoteText):
+   the added text and the screenshot figure may stand
+   above, and the source line stands LAST, a paragraph
+   holding exactly the label "Source:" and one anchor
+   whose address is the preview's own. A selection or
+   full page clip's source line stands FIRST with the
+   body after it, so those bodies never match, and any
+   body whose last block is not that source line is
+   returned untouched, byte for byte. */
+function clipDressPreviewLink(body, data) {
+  const src = String(body || "");
+  if (!src || !data) { return body; }
+  const holder = document.createElement("div");
+  holder.innerHTML = src;
+  const blocks = Array.prototype.slice.call(holder.children);
+  const last = blocks[blocks.length - 1];
+  if (!last || last.tagName !== "P") { return body; }
+  const anchors = last.querySelectorAll("a");
+  if (anchors.length !== 1) { return body; }
+  const anchor = anchors[0];
+  if (anchor.getAttribute("href") !== data.url) {
+    return body;
+  }
+  let label = "";
+  Array.prototype.slice.call(last.childNodes)
+    .forEach(function (n) {
+      if (n !== anchor) { label += n.textContent || ""; }
+    });
+  if (label.trim() !== "Source:") { return body; }
+  anchor.setAttribute("data-ss-link-view", "preview");
+  if (data.title) {
+    anchor.setAttribute("data-ss-link-title", data.title);
+  }
+  if (data.description) {
+    anchor.setAttribute("data-ss-link-desc", data.description);
+  }
+  if (data.image) {
+    anchor.setAttribute("data-ss-link-image", data.image);
+  }
+  return holder.innerHTML;
+}
+
 /* Remove from list exactly the entries whose keys are in
    removalKeys, one occurrence apiece (multiset subtraction):
    processed entries go, anything appended concurrently that
@@ -2120,6 +2251,25 @@ async function processIncomingBox() {
            the clip its text. */
         parsed.body = clipStripFigureShell(parsed.body,
           clipMarker.shot.id);
+      }
+    }
+    /* v2.204: a link-only clip's preview, carried on the
+       marker by the service (Worker v9) from the page's
+       own metadata, dresses the clip's source link as
+       the app's standing Preview display (see
+       clipPreviewData and clipDressPreviewLink beside
+       the shot judge). The judgment and the dressing
+       are both strict: a preview that does not check
+       out, or a body that is not the link-only shape,
+       imports byte-identically to before, and a marker
+       carrying no preview (every clip filed before the
+       service carried one, and every clip against an
+       older service) never reaches the judge at all. */
+    if (clipMarker && clipMarker.preview) {
+      const previewData = clipPreviewData(clipMarker.preview);
+      if (previewData) {
+        parsed.body = clipDressPreviewLink(parsed.body,
+          previewData);
       }
     }
     parsed.trashed = false;
