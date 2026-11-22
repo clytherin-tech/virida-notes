@@ -7069,16 +7069,88 @@ function closeToolbarMenus() {
    follows the hover it synthesized cannot open and
    shut in one gesture. A panel that would run off
    the right edge of the screen flips to its parent
-   row's left instead. */
+   row's left instead.
+   v2.205: the panels no longer stand inside the menu
+   at all. The menu is a scroll container, and a scroll
+   container clips absolutely positioned descendants
+   that extend past its box, so the old left:100%
+   flyout painted as a thin sliver at the menu's right
+   edge (Chris's field report, Nov 21, 2026: the Media
+   and Code panels cut off, their items unreachable;
+   even a flipped panel was clipped on the menu's left
+   side). The panel is position:fixed now and
+   placeInsertSubmenu stands it against the screen
+   beside the row that opened it, computed from the
+   row's own rect at open time: 4px right of the row,
+   7px above its top, flipped to the row's left when
+   it would run off the right edge, and shifted up
+   when it would run off the bottom. No ancestor of
+   the menu carries a transform, filter, perspective,
+   will-change, or contain (audited in the real
+   browser for this build), so fixed resolves against
+   the viewport and the menu's overflow cannot clip
+   the panel. The panel stays a DOM child of its wrap,
+   so the wrap's mouseleave still covers moving onto
+   the panel. At phone widths the media query in
+   styles.css stands the panel position:static as an
+   inline accordion; the inline placement below is
+   then inert. If the menu itself scrolls while a
+   fixed panel is open, the panels close (wired in
+   wireToolbar): a fixed panel cannot follow a
+   scrolling row, and a detached panel floating beside
+   a moved row is worse than a closed one. The
+   panel's own inner scroll never reaches that
+   listener, because an element's scroll event does
+   not bubble, and at phone widths the listener leaves
+   the inline accordion open, since there the panel
+   is part of the scrolling content itself. */
 function closeInsertSubmenus() {
   document.querySelectorAll("#insertMenu .tb-submenu")
     .forEach(function (panel) {
       panel.classList.add("hidden");
+      panel.style.left = "";
+      panel.style.top = "";
     });
   document.querySelectorAll("#insertMenu .tb-submenu-btn")
     .forEach(function (btn) {
       btn.setAttribute("aria-expanded", "false");
     });
+}
+
+/* Stand one sub-menu panel against the screen beside
+   its menu, at the height of the row that opened it.
+   The panel is already unhidden when this runs, so
+   its rect is real geometry; with position:fixed the
+   rect is viewport geometry, never the menu's
+   clipped paint. Horizontally the panel clears the
+   menu's own edge, not the row's: the row's right
+   edge stops short of the menu's border box, at the
+   menu's padding and its scrollbar, and a panel
+   starting there would tuck its first pixels under
+   that scrollbar. */
+function placeInsertSubmenu(panel, wrap) {
+  if (!panel || !wrap) { return; }
+  const row = wrap.getBoundingClientRect();
+  const menu = panel.closest(".tb-menu");
+  const edge = menu ? menu.getBoundingClientRect() : row;
+  let left = Math.round(edge.right + 4);
+  let top = Math.round(row.top - 7);
+  panel.style.left = left + "px";
+  panel.style.top = top + "px";
+  const rect = panel.getBoundingClientRect();
+  if (rect.right > window.innerWidth - 8) {
+    left = Math.round(edge.left - rect.width - 4);
+    if (left < 8) {
+      left = Math.max(8,
+        Math.round(window.innerWidth - rect.width - 8));
+    }
+    panel.style.left = left + "px";
+  }
+  if (rect.bottom > window.innerHeight - 8) {
+    top = Math.max(8,
+      Math.round(window.innerHeight - rect.height - 8));
+    panel.style.top = top + "px";
+  }
 }
 
 function openInsertSubmenu(panel) {
@@ -7089,11 +7161,7 @@ function openInsertSubmenu(panel) {
   const btn = wrap ?
     wrap.querySelector(".tb-submenu-btn") : null;
   if (btn) { btn.setAttribute("aria-expanded", "true"); }
-  panel.classList.remove("flip");
-  const rect = panel.getBoundingClientRect();
-  if (rect.right > window.innerWidth - 8) {
-    panel.classList.add("flip");
-  }
+  placeInsertSubmenu(panel, wrap);
 }
 
 /* Open one menu and close the rest. The clicked button already saved
@@ -7106,6 +7174,13 @@ function toggleToolbarMenu(id) {
   if (willOpen) {
     menu.classList.remove("hidden");
     keepMenuInViewport(menu);
+    /* v2.205: a standing block grip goes away the
+       moment a menu opens, and the grip tracker keeps
+       it down while any toolbar menu stands (the
+       stacking story lives with the tracker in
+       media.js): the grip otherwise paints over the
+       menu it can never be used under. */
+    hideBlockGrip();
   }
 }
 
@@ -7911,6 +7986,24 @@ function wireToolbar() {
       if (open) {
         ev.stopPropagation();
         ev.preventDefault();
+        closeInsertSubmenus();
+      }
+    });
+  /* v2.205: the sub-menu panels stand fixed beside
+     their menu (placeInsertSubmenu), so a menu scroll
+     would leave an open panel floating beside a row
+     that moved. Scrolling the menu puts a fixed panel
+     away instead. A panel's own inner scroll does not
+     reach this listener: an element's scroll event
+     does not bubble. At phone widths the open panel
+     is the static inline accordion, part of the
+     scrolling content itself, and stays open. */
+  document.getElementById("insertMenu").addEventListener("scroll",
+    function () {
+      const open = document.querySelector(
+        "#insertMenu .tb-submenu:not(.hidden)");
+      if (open &&
+          getComputedStyle(open).position === "fixed") {
         closeInsertSubmenus();
       }
     });

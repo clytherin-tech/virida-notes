@@ -2608,14 +2608,13 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
 .tb-menu .tb-submenu-btn{justify-content:space-between;}
 .tb-submenu-caret{color:var(--muted);font-size:11px;}
 .tb-submenu{
-  position:absolute;left:100%;top:-7px;margin-left:4px;min-width:200px;
+  position:fixed;min-width:200px;
   max-width:86vw;max-height:70vh;overflow-y:auto;z-index:31;
   background:var(--surface);border:1px solid var(--border);
   border-top:3px solid var(--brown-600);
   border-radius:var(--radius-card);box-shadow:var(--shadow);
   padding:6px;display:flex;flex-direction:column;gap:2px;
 }
-.tb-submenu.flip{left:auto;right:100%;margin-left:0;margin-right:4px;}
 .tb-submenu.hidden{display:none;}
 .tb-submenu button{
   display:flex;align-items:center;justify-content:flex-start;width:100%;

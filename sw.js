@@ -104,7 +104,7 @@
 
 "use strict";
 
-const CACHE_NAME = "snakescale-shell-2026-11-21-SSN-V22040";
+const CACHE_NAME = "snakescale-shell-2026-11-21-SSN-V22050";
 
 /* The shell, as paths relative to this worker's scope (the site
    root). "./" and "./index.html" are both listed: the first is the
@@ -151,8 +151,8 @@ const PAGE_KEY = "./index.html";
 // BEGIN GENERATED ASSET HASHES (gen_asset_hashes.py)
 const ASSET_HASHES = {
   "./index.html": "7cffb60e4166a03bc40e3d2a6706ddb211f402172281635be75857c55eecb547",
-  "./styles.css": "f4bd011d67295e890d9ab0dedad39188675ec0f31fd3bac1b29e92ed815855da",
-  "./version.js": "1042aff8dcc9f96700cd4b67ac63a6fd4589e6ec8193b21a6413ea80151857d0",
+  "./styles.css": "63c982b55e8d2f1052629f30fc3704017d0c14a284bb0f1fbcb2def1f69eaaea",
+  "./version.js": "e82831550020a2ce0802b25522d464c7d15838717d99917d2421b2fb2edd709d",
   "./core.js": "3f35d7b2bb0d9fedb62cbb00dd3776190a955f96eecc0f42a9850de55e1b686f",
   "./store.js": "0db4cb8c064c8e9c504092ebe0abe639d0e8d024d017dc015050eb4dfb170c2b",
   "./sync.js": "01be8d03355a6bb7885998abf9d8050ffe035955eac55e03d107bb494c88180b",
@@ -163,8 +163,8 @@ const ASSET_HASHES = {
   "./mail.js": "a85586632cd88a8e63f2351f3f31957c43ac45de23ef03bdd0cae30594d68761",
   "./render.js": "44fadc6e861f6346a046f74fdc6cb62832805144dca777c8098fc437ca83064c",
   "./editor.js": "a4ae6edb1c2122b05ce776fee41e8ab8538481043b309e7c2f4407e4d163c840",
-  "./editor-tools.js": "e4ad839f4de9efb068c63ca52aaf332fdfa21a88b0f9306cf6bb96c965c576e6",
-  "./media.js": "5de45636d48d2be30b578150a6addc364d9258fd5847350121d58e0fb21d615a",
+  "./editor-tools.js": "bc4d9f1944fa632d3597cb07799f3329f457cec8da8ce2ce7c72a9be12fd5802",
+  "./media.js": "3769ec9f83345ee23665e2d6dc7de7084f9c7232654bdb384aa653e7ea5d62ad",
   "./app.js": "9e904a5b1ac7225e6764846fd61f5588e8b7d5c47bcb1644abd1e262144a199d",
   "./manifest.webmanifest": "c4bb2054518b8763407f0834ba9033f690677674c003d9f4eeb4b0286cad9a94",
   "./icon-192.png": "f3b785c13d078d71790c4330c0749324796115cb06b2215629ba6e2ebdaa35f6",

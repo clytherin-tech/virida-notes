@@ -17002,6 +17002,30 @@ function onGripHoverPointerMove(ev) {
   /* A press in progress (a text selection drag, an image resize)
      is not a hover: the grip stays out of its way. */
   if (ev.buttons) { hideBlockGrip(); return; }
+  /* v2.205: while a toolbar menu stands open, the grip
+     stands down. The toolbar is position:sticky with
+     z-index 3, which makes it a stacking context, so
+     the menus' own z-indexes (30, and 31 for the
+     sub-menu panels) compete only inside the toolbar,
+     while the grip's z-index 25 competes in
+     .editor-inner's context and outranks the toolbar's
+     whole subtree: the grip painted over the open
+     Insert menu, hopping line to line as the pointer
+     walked the menu (Chris's field report, Nov 21,
+     2026; this tracker kept resolving the block level
+     with the pointer and re-showing it, because the
+     menu lives inside .editor-scroll like everything
+     else in the column). No line drag can start while
+     a menu is open (the pointer is on the menu, not
+     the grip), so the grip waits the menu out, the
+     same way it already waits out a drag and a press
+     above. toggleToolbarMenu hides a standing grip
+     the moment a menu opens; this guard keeps it down
+     for as long as any toolbar menu stands. */
+  if (document.querySelector(".tb-menu:not(.hidden)")) {
+    hideBlockGrip();
+    return;
+  }
   const bodyEl = document.getElementById("noteBody");
   if (!bodyEl || bodyEl.contentEditable === "false") {
     hideBlockGrip();
