@@ -104,7 +104,7 @@
 
 "use strict";
 
-const CACHE_NAME = "snakescale-shell-2026-11-22-SSN-V22071";
+const CACHE_NAME = "snakescale-shell-2026-11-22-SSN-V22080";
 
 /* The shell, as paths relative to this worker's scope (the site
    root). "./" and "./index.html" are both listed: the first is the
@@ -152,8 +152,8 @@ const PAGE_KEY = "./index.html";
 const ASSET_HASHES = {
   "./index.html": "7cffb60e4166a03bc40e3d2a6706ddb211f402172281635be75857c55eecb547",
   "./styles.css": "63c982b55e8d2f1052629f30fc3704017d0c14a284bb0f1fbcb2def1f69eaaea",
-  "./version.js": "72b0e708cfcdd58947b41b24b6093d3770e04d0e4aa296767c4898daf64c9c32",
-  "./core.js": "3f35d7b2bb0d9fedb62cbb00dd3776190a955f96eecc0f42a9850de55e1b686f",
+  "./version.js": "cc60fc74646ff668a8067e7fe0b6fdf2dc1c740e4fdccd2b55545fb0b7219b89",
+  "./core.js": "36eaa0b66706f4760d3eab96f8e4794c92e1a39796bd1b39eeb6dec50692801f",
   "./store.js": "74852453ec62164e9b24d3f7a2e8f816c530a2fc2bbece6059f92d9533ee76bd",
   "./sync.js": "92a6f98744dc6a89165431978994d0dbcb770506bcec455cb6957dc9a7692276",
   "./tasks.js": "9f5764d06d9d7b17d2d5c55b9af49ed587ea50671d053cfb35e4edbac60e6d81",
@@ -161,10 +161,10 @@ const ASSET_HASHES = {
   "./home.js": "39c880e4084f66c887929140ed6e48bae5bd3134ba42c7803c04f88fd589a77f",
   "./calendar.js": "1d8926b971eecfa2a7cfd0e285272ad26bc8ff95a88138878f3dff1c078c79b4",
   "./mail.js": "dd5559bd86e5d3226b5aa8bed1e9b99bc14426f54a850a8eb6fa8ed4145d0448",
-  "./render.js": "0c4c48e459ba024861e87de21575b1241f1657c41c774be7b57db6b352ae5eb9",
+  "./render.js": "2412202a1c2d022442095c17aaac57193604a1c14cd48dd5ea167799267273e3",
   "./editor.js": "7d7c37141db0d91971fedd204bdf1b46ede2a0b096420375763aa7aec04ea986",
   "./editor-tools.js": "7f72275e6742c1da18303c812aa53cea90db02343f545071be08c48642c038ff",
-  "./media.js": "2a06a67ecf76f38d4b73d75b944de43b84ba0e344fe78aacf18780fcdf19471f",
+  "./media.js": "ede5e081b9e2a7eaefc30426010ac10569a8d14686108fadb7d852d7cec897de",
   "./app.js": "9e904a5b1ac7225e6764846fd61f5588e8b7d5c47bcb1644abd1e262144a199d",
   "./manifest.webmanifest": "c4bb2054518b8763407f0834ba9033f690677674c003d9f4eeb4b0286cad9a94",
   "./icon-192.png": "f3b785c13d078d71790c4330c0749324796115cb06b2215629ba6e2ebdaa35f6",

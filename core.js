@@ -1126,8 +1126,8 @@ function moveNoteWithProgress(present, past, legacyToast, work, undoEntry) {
 /* v2.96: Undo for the note moves to Trash and
    Archive. A move's completion toast gains an Undo
    button with the standing undo window (five
-   seconds, the attachment deletion's
-   PENDING_DELETE_MS measure), standing in the undo
+   seconds, the measure the attachment deletion's
+   window used through v2.206), standing in the undo
    toast box, whose toasts take events (.undo-toast
    wears pointer-events:auto in that box); the move
    completion's own home, the top center box, is
@@ -2677,6 +2677,10 @@ async function deleteVersionHistoryBestEffort(noteId) {
      - prunes to the limit in force, dropping the oldest entries,
        which is also how a lowered limit takes effect on the next
        maintenance for a note, even when the pass adds nothing;
+     - v2.207: once a write (or a limit 0 removal) lands, hands
+       the dropped entries to the attachment trim sweep in
+       media.js, which trashes any file the dropped entries
+       were the last thing pointing at;
      - writes the file only when something actually changed.
    A write that fails because the sign in expired or the network
    dropped is queued as a replay entry (unless the caller forbids
@@ -2698,7 +2702,6 @@ async function maintainVersionHistory(noteId, previous, options) {
     }
     try {
       await deleteLoadedVersionHistory(noteId, loaded);
-      return { status: "deleted" };
     } catch (err) {
       if ((err.offline || err.needsGoogleReconnect) &&
           options.allowDefer !== false) {
@@ -2712,6 +2715,17 @@ async function maintainVersionHistory(noteId, previous, options) {
       }
       return { status: "delete-failed", error: err };
     }
+    /* v2.207: the whole history just let go of every file
+       it pointed at; the trim sweep asks the retention
+       question for each, now that the history file is
+       gone, and trashes the ones nothing else points at.
+       The sweep is best effort and never throws, so the
+       deleted verdict below stands whatever it finds. */
+    if (typeof sweepDroppedVersionAttachments === "function") {
+      await sweepDroppedVersionAttachments(noteId,
+        loaded.data.versions);
+    }
+    return { status: "deleted" };
   }
 
   const versions = loaded.data.versions.map(function (entry) {
@@ -2740,7 +2754,12 @@ async function maintainVersionHistory(noteId, previous, options) {
       changed = true;
     }
   }
+  /* v2.207: the entries this pass drops past the limit,
+     captured before the truncation: once the write below
+     lands, they are the trim sweep's candidates. */
+  let droppedVersions = [];
   if (versions.length > limit) {
+    droppedVersions = versions.slice(limit);
     versions.length = limit;
     changed = true;
   }
@@ -2750,6 +2769,16 @@ async function maintainVersionHistory(noteId, previous, options) {
   const data = { noteId: noteId, versions: versions };
   try {
     await writeVersionHistoryData(noteId, data, loaded.token);
+    /* v2.207: the trim has landed, so a candidate file's
+       retention question now reads the post trim world.
+       A pass that only queued the trim (the offline path
+       in the catch below) sweeps nothing here: the queued
+       flush runs this same pass when it lands the trim,
+       and sweeps then. The sweep never throws. */
+    if (droppedVersions.length &&
+        typeof sweepDroppedVersionAttachments === "function") {
+      await sweepDroppedVersionAttachments(noteId, droppedVersions);
+    }
     return { status: "saved", data: cloneVersionValue(data) };
   } catch (err) {
     if (isStoreConflict(err)) {
@@ -2820,6 +2849,104 @@ async function flushVersionHistoryOp(op) {
     throw result.error || new Error("The version history update failed during sync.");
   }
   return result;
+}
+
+/* --------------------------------------------------------------------------
+   v2.207: the attachment retention question
+
+   Does anything still point at this attachment file? The
+   union the answer reads is the orphan scan's own (see
+   collectOrphanReferences in render.js), narrowed by the
+   caller's exceptions: every note's current attachment
+   records across the library, Trash, and Archive (a shell
+   note's records are read from its stored file, since the
+   shell itself does not hold them), plus the attachment
+   records inside every retained version snapshot of every
+   note. Callers:
+     - the attachment finalize in media.js, which excepts
+       exactly the one record being dropped (skipRecord):
+       the owning note's versions count in full, because a
+       version that names the file is the reason to keep it;
+     - Delete Forever, which excepts the dying notes
+       wholesale (skipCurrentNoteIds and skipVersionNoteIds
+       naming the same batch): a note's own records and its
+       own versions go with it and never protect its files,
+       while every other note's records and versions do.
+   The question fails closed, like the scan's: a note file
+   or a versions file that cannot be read throws, and every
+   caller treats the throw as "still referenced", so an
+   unreadable store keeps files rather than freeing them.
+   -------------------------------------------------------------------------- */
+async function attachmentFileStillReferenced(fileId, options) {
+  options = options || {};
+  const target = String(fileId || "");
+  if (!target) { return false; }
+  const skipCurrent = options.skipCurrentNoteIds || [];
+  const skipVersions = options.skipVersionNoteIds || [];
+  const skipRecord = options.skipRecord || null;
+  function recordCounts(rec, noteId) {
+    if (!rec || !rec.fileId || String(rec.fileId) !== target) {
+      return false;
+    }
+    if (skipRecord && noteId === skipRecord.noteId &&
+        rec.id === skipRecord.attId) {
+      return false;
+    }
+    return true;
+  }
+  const lists = [state.notes, state.trash, state.archive];
+  for (const list of lists) {
+    for (const note of (list || [])) {
+      if (!note || skipCurrent.indexOf(note.id) >= 0) { continue; }
+      if ((note.attachments || []).some(function (rec) {
+        return recordCounts(rec, note.id);
+      })) { return true; }
+      if (note.shellCardAtt &&
+          recordCounts(note.shellCardAtt, note.id)) {
+        return true;
+      }
+      if (note.bodyLoaded === false) {
+        const file = await storeGetFile(notePath(note));
+        if (!file) {
+          throw new Error("A note file could not be read (" +
+            notePath(note) + "), so the retention question " +
+            "stopped rather than guess at its attachments.");
+        }
+        const parsed = parseNoteFile(file.text, file.token, note.id,
+          note.trashed, note.archived);
+        if ((parsed.attachments || []).some(function (rec) {
+          return recordCounts(rec, note.id);
+        })) { return true; }
+      }
+    }
+  }
+  const ventries = (await storeListDir(VERSIONS_FOLDER_NAME)) || [];
+  for (const entry of ventries) {
+    if (entry.isDir || !/\.json$/i.test(entry.name)) { continue; }
+    const ownerId = entry.name.replace(/\.json$/i, "");
+    if (skipVersions.indexOf(ownerId) >= 0) { continue; }
+    const vpath = VERSIONS_FOLDER_NAME + "/" + entry.name;
+    const file = await storeGetFile(vpath);
+    if (!file) {
+      throw new Error("A saved versions file could not be read (" +
+        vpath + "), so the retention question stopped rather " +
+        "than guess at its attachments.");
+    }
+    let data = null;
+    try { data = JSON.parse(file.text); } catch (err) {
+      throw new Error("A saved versions file could not be " +
+        "understood (" + vpath + "), so the retention question " +
+        "stopped rather than guess at its attachments.");
+    }
+    const hit = ((data && data.versions) || []).some(function (v) {
+      return ((v && v.attachments) || []).some(function (rec) {
+        return !!rec && !!rec.fileId &&
+          String(rec.fileId) === target;
+      });
+    });
+    if (hit) { return true; }
+  }
+  return false;
 }
 /* --------------------------------------------------------------------------
    v2.192: note sessions, and the versions they mint
@@ -3223,16 +3350,39 @@ async function endNoteSession(noteId) {
   if (!session) { return; }
   delete noteSessionByNoteId[noteId];
   await settleEndedNoteSession(session, false);
+  /* v2.207: the note's pending attachment deletions
+     finalize at this same commit point, behind the
+     settle, so the sitting's mint has already written
+     any version the finalize's retention question must
+     see (see the attachment section in media.js). The
+     finalize judges its own failures file by file; the
+     catch here is only a belt over its braces. */
+  if (typeof finalizePendingAttachmentDeletesForNote ===
+      "function") {
+    await finalizePendingAttachmentDeletesForNote(noteId)
+      .catch(function () { /* judged inside the finalize */ });
+  }
 }
 
 /* The hide flush (app.js registers it beside the
    catalog's own): every standing session ends. */
 function endAllNoteSessions() {
-  Object.keys(noteSessionByNoteId).forEach(function (noteId) {
-    endNoteSession(noteId).catch(function () {
-      /* the durable record carries what the flush could not */
+  const endings = Object.keys(noteSessionByNoteId)
+    .map(function (noteId) {
+      return endNoteSession(noteId).catch(function () {
+        /* the durable record carries what the flush could not */
+      });
     });
-  });
+  /* v2.207: behind every session's end (each end already
+     finalizes its own note), the all notes finalize
+     sweeps any pending attachment deletion whose note
+     had no standing session to end. */
+  if (typeof finalizeAllPendingAttachmentDeletes ===
+      "function") {
+    Promise.all(endings).then(function () {
+      return finalizeAllPendingAttachmentDeletes();
+    }).catch(function () { /* judged inside the finalize */ });
+  }
 }
 
 /* Queue the commit of one pending session record (a live

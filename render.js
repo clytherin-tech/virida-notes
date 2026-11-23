@@ -4882,14 +4882,51 @@ function pendingDeleteIds() {
   return ids;
 }
 
+/* v2.207: the attachment files a Delete Forever batch
+   must NOT take: any file another note still points at,
+   in its current records or in any retained version of
+   any note (the retention question in core.js, with the
+   whole batch excepted: the dying notes' own records and
+   versions go with them and never protect). The question
+   fails closed, so an unreadable store protects the file.
+   A file two dying notes share is protected by neither
+   and is claimed by the first entry that names it (see
+   addPendingDeletes), so the drain trashes it once. */
+async function collectDeleteForeverProtectedFiles(notes) {
+  const keep = new Set();
+  const batchIds = notes.map(function (n) { return n.id; });
+  for (const note of notes) {
+    for (const att of (note.attachments || [])) {
+      if (!att || !att.fileId) { continue; }
+      let referenced = true;
+      try {
+        referenced = await attachmentFileStillReferenced(
+          String(att.fileId), {
+            skipCurrentNoteIds: batchIds,
+            skipVersionNoteIds: batchIds
+          });
+      } catch (err) {
+        referenced = true;
+      }
+      if (referenced) { keep.add(String(att.fileId)); }
+    }
+  }
+  return keep;
+}
+
 /* One note's record entry, built from the note as it
    stands at confirm time, in the standing flow's work
    order: its attachments, its note file, its history
-   file, and its Doc when it still stands Doc-backed. */
-function pendingDeleteEntryFor(note) {
+   file, and its Doc when it still stands Doc-backed.
+   v2.207: attachment files the batch's protection pass
+   named (collectDeleteForeverProtectedFiles) never
+   enter the entry at all, so the drain never sees them. */
+function pendingDeleteEntryFor(note, protectedFileIds) {
   const files = [];
   (note.attachments || []).forEach(function (att) {
     if (!att || !att.fileId) { return; }
+    if (protectedFileIds && protectedFileIds.has(
+        String(att.fileId))) { return; }
     files.push({
       k: "att", provider: String(att.provider || ""),
       fileId: String(att.fileId),
@@ -4917,11 +4954,22 @@ function pendingDeleteEntryFor(note) {
    (its deletion still owed from an earlier confirm)
    has its entry rebuilt from the note as it stands
    now, never duplicated. */
-function addPendingDeletes(notes) {
+function addPendingDeletes(notes, protectedFileIds) {
   const record = readPendingDeletes();
   const taken = [];
+  /* v2.207: an attachment file two notes in this batch
+     share is claimed by the first entry built, so the
+     later entries never name it and the drain trashes
+     it once, not once per owner. */
+  const claimed = new Set();
   notes.forEach(function (note) {
-    const entry = pendingDeleteEntryFor(note);
+    const entry = pendingDeleteEntryFor(note, protectedFileIds);
+    entry.files = entry.files.filter(function (file) {
+      if (file.k !== "att") { return true; }
+      if (claimed.has(file.fileId)) { return false; }
+      claimed.add(file.fileId);
+      return true;
+    });
     const at = record.notes.findIndex(function (e) {
       return e.id === note.id;
     });
@@ -5214,7 +5262,13 @@ function kickPendingDeleteDrain() {
    settles. */
 async function deleteNotesForever(notes) {
   if (!notes.length) { return []; }
-  const taken = addPendingDeletes(notes);
+  /* v2.207: the protection pass runs first, while every
+     note still stands where the retention question reads
+     it; the entries built below then leave protected
+     files out of the drain's reach entirely. */
+  const protectedFileIds =
+    await collectDeleteForeverProtectedFiles(notes);
+  const taken = addPendingDeletes(notes, protectedFileIds);
   const priorTrash = state.trash;
   const priorArchive = state.archive;
   const priorSelectedId = state.selectedId;

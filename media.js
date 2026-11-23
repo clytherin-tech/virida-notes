@@ -12426,7 +12426,7 @@ async function downloadAttachment(att) {
 
    Now every removal path runs through one engine:
      - scheduleAttachmentDelete takes the block out of the note right
-       away and opens a five second undo window, announced by a toast
+       away and opens an undo window, announced by a toast
        at the TOP of the window (its own box, #undoToastBox, separate
        from the bottom #toastBox) naming the file and offering Undo.
      - The metadata record stays in note.attachments for the whole
@@ -12434,25 +12434,47 @@ async function downloadAttachment(att) {
        the note's saved shape does not change until the cloud delete
        has actually succeeded, and filename search and attachment
        counts keep treating the record normally meanwhile.
-     - When the timer fires, the cloud file is deleted first; only
+     - When the window closes, the cloud file is deleted first; only
        then is the record dropped and the note persisted. If the app
        is offline, the provider is signed out, or the delete fails,
        the block is restored exactly as Undo would restore it, and an
        error toast says the attachment was kept.
      - Undo (or the block reappearing on its own, for example through
-       the editor's own Ctrl+Z) cancels the pending delete: the timer
-       is cleared and the toast dismissed, and for Undo the captured
+       the editor's own Ctrl+Z) cancels the pending delete: the entry
+       is dropped and the toast dismissed, and for Undo the captured
        block is also reinserted where it was and rehydrated.
      - Signing out cancels every pending deletion WITHOUT deleting
        anything: the block is already out of the note body (and
        that body state is what the sign out flow saves),
        but the record stays in the note and the file stays in the
-       cloud, so the two never disagree about a file that exists. */
-const PENDING_DELETE_MS = 5000;
+       cloud, so the two never disagree about a file that exists.
+
+   v2.207: the window is retimed, and the firing is retention
+   aware (Chris's design, Nov 22, 2026). Through v2.206 the
+   window was a five second timer (PENDING_DELETE_MS); the
+   deletion now stays pending while the note is open, Undo
+   standing the whole time, and it finalizes at the note's
+   commit point, the same moment its save on leave lands:
+   endNoteSession runs the finalize behind the session's
+   settle on a switch or a close, and the hide flush runs
+   it behind every session's end when the app closes. At
+   finalize the file is not automatically trashed: the
+   reference question (attachmentFileStillReferenced in
+   core.js) asks whether any other note's current records,
+   or any retained version of any note, still points at
+   the file. A pointed at file is kept in Drive untouched
+   and only the live record drops, so restoring that
+   version rehydrates from the kept file; a file nothing
+   points at is trashed exactly as the old firing trashed
+   it, with the same guards and the same kept on failure
+   protection. When the last version pointing at a kept
+   file later rolls off the history limit, the history
+   maintenance that lands the trim sweeps the file then
+   (see sweepDroppedVersionAttachments below). */
 
 /* Pending entries, keyed by note id + "|" + attachment id. An entry
    holds everything needed to finish the deletion or to take it
-   back: { key, note, att, html, anchorId, toastEl, timer }. */
+   back: { key, note, att, html, anchorId, toastEl }. */
 const pendingAttachmentDeletes = new Map();
 
 function pendingDeleteKey(note, att) {
@@ -12618,7 +12640,7 @@ function dismissUndoToast(entry) {
    when the block is on screen, or from the caller supplied capture
    (the keyboard reconciliation passes the body snapshot's last known
    HTML for a block that is already out of the DOM). The record stays
-   in note.attachments until the timer fires. */
+   in note.attachments until the deletion finalizes. */
 function scheduleAttachmentDelete(note, att, captured) {
   /* v2.75: act on the live pair, never a stale capture
      (see liveAttachmentPair). */
@@ -12631,7 +12653,7 @@ function scheduleAttachmentDelete(note, att, captured) {
   }
   const entry = {
     key: key, note: note, att: att,
-    html: null, anchorId: null, toastEl: null, timer: null
+    html: null, anchorId: null, toastEl: null
   };
   if (captured && (captured.html || captured.anchorId)) {
     entry.html = captured.html || null;
@@ -12649,11 +12671,9 @@ function scheduleAttachmentDelete(note, att, captured) {
   }
   pendingAttachmentDeletes.set(key, entry);
   showUndoToast(entry);
-  entry.timer = setTimeout(function () {
-    firePendingAttachmentDelete(key).catch(function (err) {
-      console.warn("Attachment deletion failed:", err);
-    });
-  }, PENDING_DELETE_MS);
+  /* v2.207: no timer. The deletion stays pending while the
+     note is open and finalizes at the note's commit point
+     (see the section header above). */
   /* The block leaving the note is an edit like any other; autosave
      persists the body without it while the record (and the file)
      still exist, which is exactly the state Undo expects to find. */
@@ -12661,12 +12681,11 @@ function scheduleAttachmentDelete(note, att, captured) {
   return entry;
 }
 
-/* Take a pending deletion back: clear the timer, dismiss the toast,
-   and put the block back where it was. */
+/* Take a pending deletion back: drop the entry, dismiss the
+   toast, and put the block back where it was. */
 function undoAttachmentDelete(key) {
   const entry = pendingAttachmentDeletes.get(key);
   if (!entry) { return; }
-  if (entry.timer) { clearTimeout(entry.timer); }
   pendingAttachmentDeletes.delete(key);
   dismissUndoToast(entry);
   restoreAttachmentPlaceholder(entry.note, entry);
@@ -12680,7 +12699,6 @@ function undoAttachmentDelete(key) {
 function cancelPendingAttachmentDelete(key) {
   const entry = pendingAttachmentDeletes.get(key);
   if (!entry) { return; }
-  if (entry.timer) { clearTimeout(entry.timer); }
   pendingAttachmentDeletes.delete(key);
   dismissUndoToast(entry);
 }
@@ -12705,19 +12723,26 @@ function stripAttachmentFromBodyText(note, attId) {
   if (el) { el.remove(); note.body = holder.innerHTML; }
 }
 
-/* The undo window closed: delete the cloud file, and only then drop
-   the record and persist the note. Every failure path restores the
-   block and keeps the record, with the same protective wording the
-   old immediate flow used: the attachment was kept. The guards that
-   used to run before the old immediate delete (the provider must
-   exist, the app must be online, the provider must be signed in)
-   run here instead, at firing time, so the removal itself always
-   feels instant.
+/* The undo window closed: the deletion finalizes. Delete the
+   cloud file, and only then drop the record and persist the
+   note. Every failure path restores the block and keeps the
+   record, with the same protective wording the old immediate
+   flow used: the attachment was kept. The guards that used
+   to run before the old immediate delete (the provider must
+   exist, the app must be online, the provider must be signed
+   in) run here instead, at finalize time, so the removal
+   itself always feels instant.
    v2.66: the firing runs the provider's trash, not its
    delete, so the file moves to Drive trash and stays
    recoverable by the owner. The failure paths are
    unchanged: a trash that fails restores the block and
-   keeps the record, exactly as a failed delete did. */
+   keeps the record, exactly as a failed delete did.
+   v2.207: the firing is the finalize (the five second
+   timer is gone; the finalize drivers below run it at the
+   note's commit point), and before the trash it asks the
+   retention question: a file any other note's records, or
+   any retained version of any note, still points at is
+   kept untouched, and only the record drops. */
 async function firePendingAttachmentDelete(key) {
   const entry = pendingAttachmentDeletes.get(key);
   if (!entry) { return; }
@@ -12752,18 +12777,39 @@ async function firePendingAttachmentDelete(key) {
       " is not signed in, so the attachment was kept.");
     return;
   }
+  /* v2.207: retention by reference. A file another note's
+     records still name, or any retained version of any
+     note still points at, is not trashed: the record drops
+     below exactly as it always has, the version snapshots
+     carry their own copies of the record, and a later
+     restore rehydrates from the kept file. The question
+     fails closed: a store that cannot be read keeps the
+     file, and the orphan scan remains the backstop for a
+     file kept by a failed question. */
+  let referenced = true;
   try {
-    await driver.trash(att.fileId);
+    referenced = await attachmentFileStillReferenced(att.fileId, {
+      skipRecord: { noteId: note.id, attId: att.id }
+    });
   } catch (err) {
-    restoreWithError("The cloud file could not be deleted, so the attachment was kept: " +
-      err.message);
-    return;
+    referenced = true;
+  }
+  if (!referenced) {
+    try {
+      await driver.trash(att.fileId);
+    } catch (err) {
+      restoreWithError("The cloud file could not be deleted, so the attachment was kept: " +
+        err.message);
+      return;
+    }
   }
   note.attachments = (note.attachments || []).filter(function (a) {
     return a.id !== att.id;
   });
   /* v2.11: a thumbnail pointing at a file that no longer exists
-     is cleared in the same save, so the choice never dangles. */
+     is cleared in the same save, so the choice never dangles.
+     v2.207: the record's drop is what clears it now; a kept
+     file's record is gone from the note all the same. */
   if (note.thumbnail === att.id) { note.thumbnail = null; }
   if (currentNote() === note) {
     /* Autosave persists the record drop alongside the body, which
@@ -12786,6 +12832,88 @@ async function firePendingAttachmentDelete(key) {
         "\" was deleted, but the note could not be saved: " + err.message, true);
     }
     saveCache();
+  }
+}
+
+/* v2.207: the finalize drivers. A pending deletion finalizes
+   at the note's commit point, the same moment its save on
+   leave lands: endNoteSession in core.js runs the per note
+   driver behind the session's settle on a switch or a
+   close, so the sitting's mint has already written any
+   version the retention question must see, and the hide
+   flush runs the all notes driver behind every session's
+   end when the app itself closes. Each firing judges its
+   own failures, so the drivers simply walk what stands,
+   one note's entries in the order they were scheduled. */
+async function finalizePendingAttachmentDeletesForNote(noteId) {
+  const keys = Array.from(pendingAttachmentDeletes.keys())
+    .filter(function (key) {
+      return key.indexOf(noteId + "|") === 0;
+    });
+  for (const key of keys) {
+    await firePendingAttachmentDelete(key).catch(function (err) {
+      console.warn("Attachment deletion failed:", err);
+    });
+  }
+}
+
+async function finalizeAllPendingAttachmentDeletes() {
+  const keys = Array.from(pendingAttachmentDeletes.keys());
+  for (const key of keys) {
+    await firePendingAttachmentDelete(key).catch(function (err) {
+      console.warn("Attachment deletion failed:", err);
+    });
+  }
+}
+
+/* v2.207: the trim sweep. When version history maintenance
+   lands a trim (or a limit 0 removal of a whole history),
+   the entries that fell off may have been the last thing
+   pointing at an attachment file a finalize kept. Each
+   candidate file is asked the retention question against
+   the world as it now stands (every note's current
+   records, every retained version); a file nothing points
+   at is trashed through its provider, under the same
+   guards the finalize runs. Best effort throughout: a
+   file that cannot be judged or cannot be trashed is
+   simply left standing, and the Settings orphan scan
+   remains the backstop. Never throws. */
+async function sweepDroppedVersionAttachments(noteId, droppedEntries) {
+  try {
+    const seen = Object.create(null);
+    const candidates = [];
+    (droppedEntries || []).forEach(function (entry) {
+      ((entry && entry.attachments) || []).forEach(function (rec) {
+        if (!rec || !rec.fileId) { return; }
+        const fid = String(rec.fileId);
+        if (seen[fid]) { return; }
+        seen[fid] = true;
+        candidates.push(rec);
+      });
+    });
+    for (const rec of candidates) {
+      try {
+        let referenced = true;
+        try {
+          referenced = await attachmentFileStillReferenced(
+            String(rec.fileId), {});
+        } catch (err) {
+          referenced = true;
+        }
+        if (referenced) { continue; }
+        const driver = providers[rec.provider];
+        if (!driver || !state.online) { continue; }
+        let status = null;
+        try { status = await driver.getStatus(); }
+        catch (e) { status = null; }
+        if (!status || !status.connected) { continue; }
+        await driver.trash(rec.fileId);
+      } catch (err) {
+        /* one file's failure never stops the sweep */
+      }
+    }
+  } catch (err) {
+    /* the sweep is maintenance; it never surfaces */
   }
 }
 
@@ -13010,11 +13138,31 @@ async function insertRestoredAttachments(note) {
    attachment files land in Drive trash, recoverable
    by the owner. The note's own file still deletes
    permanently through the store, and the failure
-   contract here is unchanged. */
+   contract here is unchanged.
+   v2.207: a file another note still points at, in its
+   current records or in any retained version of any
+   note, is not this note's to delete: it is kept,
+   silently, exactly as the finalize keeps it. The note's
+   own records and its own versions never protect here:
+   both go with the note. The question fails closed, so
+   an unreadable store keeps the file too. */
 async function deleteAttachmentsBestEffort(note) {
   const failed = [];
   const atts = note.attachments || [];
   for (const att of atts) {
+    if (att.fileId) {
+      let referenced = true;
+      try {
+        referenced = await attachmentFileStillReferenced(
+          String(att.fileId), {
+            skipCurrentNoteIds: [note.id],
+            skipVersionNoteIds: [note.id]
+          });
+      } catch (err) {
+        referenced = true;
+      }
+      if (referenced) { continue; }
+    }
     const driver = providers[att.provider];
     if (!driver) { failed.push(att.name); continue; }
     try {
