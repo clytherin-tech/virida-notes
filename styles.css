@@ -3260,7 +3260,8 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
   border:1px dashed var(--border) !important;}
 #tableSelectStrips{position:fixed;inset:0;pointer-events:none;z-index:59;}
 .ss-tsel-seg{
-  position:fixed;pointer-events:auto;box-sizing:border-box;
+  position:fixed;pointer-events:auto;touch-action:none;
+  box-sizing:border-box;
   display:flex;align-items:center;justify-content:center;
   background:var(--soft);border:1px solid var(--border);
   color:var(--muted);font-size:10.5px;font-weight:600;line-height:1;
@@ -3271,7 +3272,8 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
 .ss-tsel-seg[data-kind="col"]{border-radius:4px 4px 0 0;}
 .ss-tsel-seg[data-kind="row"]{border-radius:4px 0 0 4px;}
 .ss-tsel-add{
-  position:fixed;z-index:59;box-sizing:border-box;
+  position:fixed;z-index:59;touch-action:none;
+  box-sizing:border-box;
   display:inline-flex;align-items:center;gap:5px;
   padding:4px 10px;border-radius:999px;
   background:var(--surface);border:1px solid var(--border);

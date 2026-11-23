@@ -5831,6 +5831,8 @@ let stripDrag = null;
    press that ends off the layer never delivers its click
    here, and must not swallow the next element's click. */
 let stripSuppressEl = null;
+let stripTable = null;      /* v2.211: the table the strips stand for */
+let stripPressActive = false; /* v2.211: a strip press or drag in flight */
 
 /* Spreadsheet letters for a column index: A, B, ..., Z, AA. */
 function columnLetters(idx) {
@@ -5848,11 +5850,12 @@ function columnLetters(idx) {
    is open). The gridlines are not furniture: they stay. */
 function hideTableSelectStrips() {
   stripSig = "";
+  stripTable = null;
   const layer = document.getElementById("tableSelectStrips");
   if (layer) { layer.innerHTML = ""; }
 }
 
-/* Build the strip segments for every table in the body: one
+/* Build the strip segments for the one active table: one
    segment per column parked above the table, labeled with
    its spreadsheet letter (a press selects the column, a
    drag reorders it), one per visible row parked at its
@@ -5860,12 +5863,11 @@ function hideTableSelectStrips() {
    the row, a drag reorders it), and an Add row bar under
    each table. Zero height rows (a filter hides them) get
    no segment: they have no row on screen to select. */
-function buildAllTableStrips() {
+function buildActiveTableStrips(table) {
   const layer = document.getElementById("tableSelectStrips");
-  const bodyEl = document.getElementById("noteBody");
-  if (!layer || !bodyEl) { return; }
+  if (!layer || !table) { return; }
   layer.innerHTML = "";
-  function addSeg(table, kind, spec, label, cls) {
+  function addSeg(kind, spec, label, cls) {
     const el = document.createElement("div");
     el.className = cls || "ss-tsel-seg";
     el.setAttribute("data-kind", kind);
@@ -5876,24 +5878,21 @@ function buildAllTableStrips() {
     layer.appendChild(el);
     return el;
   }
-  Array.prototype.forEach.call(bodyEl.querySelectorAll("table"),
-    function (table) {
-      const cols = tableResizeGridColumns(table);
-      for (let c = 0; c < cols; c++) {
-        addSeg(table, "col", { index: c }, columnLetters(c));
-      }
-      let bodyNo = 0;
-      Array.prototype.forEach.call(table.rows, function (row) {
-        const inHeader = row.parentElement &&
-          row.parentElement.tagName === "THEAD";
-        if (!inHeader) { bodyNo++; }
-        if (row.getBoundingClientRect().height > 0) {
-          addSeg(table, "row", { rowEl: row },
-            inHeader ? "" : String(bodyNo));
-        }
-      });
-      addSeg(table, "add", {}, "+ Add row", "ss-tsel-add");
-    });
+  const cols = tableResizeGridColumns(table);
+  for (let c = 0; c < cols; c++) {
+    addSeg("col", { index: c }, columnLetters(c));
+  }
+  let bodyNo = 0;
+  Array.prototype.forEach.call(table.rows, function (row) {
+    const inHeader = row.parentElement &&
+      row.parentElement.tagName === "THEAD";
+    if (!inHeader) { bodyNo++; }
+    if (row.getBoundingClientRect().height > 0) {
+      addSeg("row", { rowEl: row },
+        inHeader ? "" : String(bodyNo));
+    }
+  });
+  addSeg("add", {}, "+ Add row", "ss-tsel-add");
   /* The reorder indicator line rides in the same layer,
      hidden until a strip drag is under way. */
   const line = document.createElement("div");
@@ -5902,18 +5901,12 @@ function buildAllTableStrips() {
   layer.appendChild(line);
 }
 
-/* A fingerprint of every table's shape in body order: the
+/* A fingerprint of the active table's shape: the
    strips rebuild when it changes and only then. */
-function tableStripsSignature() {
-  const bodyEl = document.getElementById("noteBody");
-  if (!bodyEl) { return ""; }
-  const parts = [];
-  Array.prototype.forEach.call(bodyEl.querySelectorAll("table"),
-    function (table) {
-      parts.push(tableResizeGridColumns(table) + "/" +
-        table.rows.length);
-    });
-  return parts.join("|");
+function tableStripsSignature(table) {
+  if (!table) { return ""; }
+  return tableResizeGridColumns(table) + "/" +
+    table.rows.length;
 }
 
 /* (Re)park every segment and Add row bar from live
@@ -5962,20 +5955,38 @@ function positionAllTableStrips() {
   });
 }
 
-/* The strips watcher (v2.210): stand the strips on every
-   table while the note is editable; stand them down when
-   it is not. Unlike the v2.209 watcher this never follows
-   the hover or the caret: the strips are part of the
-   editor's standing dress, so traveling toward one can
-   never tear it down. */
+/* The strips watcher (v2.211): the strips stand for the
+   one active table only, the table the hover or the caret
+   is in, or the table holding the standing cell selection;
+   they stand down for every other table and when no table
+   is active. Chris's ruling on 2026-11-23: the tabs show
+   only while he is inside the table or has it selected.
+   The gridlines stay global by contrast (they are the
+   table's own outline, not furniture). Resting on a strip
+   never changes the tracked table (the mouseover watcher
+   exempts the layer), so traveling toward a tab can never
+   tear it down mid-press. */
+function stripActiveTable() {
+  if (cellMenuTable && cellMenuTable.isConnected) {
+    return cellMenuTable;
+  }
+  if (cellSelAnchor && cellSelAnchor.isConnected) {
+    return cellSelAnchor.closest("table");
+  }
+  return null;
+}
+
 function updateTableSelectStrips() {
   const layer = document.getElementById("tableSelectStrips");
   if (!layer) { return; }
   if (!cellEditorEditable()) { hideTableSelectStrips(); return; }
-  const sig = tableStripsSignature();
-  if (sig !== stripSig) {
+  const table = stripActiveTable();
+  if (!table) { hideTableSelectStrips(); return; }
+  const sig = tableStripsSignature(table);
+  if (table !== stripTable || sig !== stripSig) {
+    stripTable = table;
     stripSig = sig;
-    buildAllTableStrips();
+    buildActiveTableStrips(table);
   }
   positionAllTableStrips();
 }
@@ -6197,6 +6208,7 @@ function updateCellMenu() {
   if (menu && !menu.classList.contains("hidden")) { return; }
   if (cellDragState && cellDragState.active) { return; }
   if (tableResizeDrag) { return; }
+  if (stripPressActive) { return; }
   const bodyEl = document.getElementById("noteBody");
   let cell = null;
   if (cellHoverCell && bodyEl.contains(cellHoverCell)) {
@@ -6811,10 +6823,20 @@ function wireCellMenu() {
     const hit = stripSpecOf(ev);
     if (!hit) { return; }
     ev.preventDefault();
+    ev.stopPropagation();
+    stripPressActive = true;
     stripSuppressEl = hit.el;
     const spec = hit.spec;
     if (!spec.table || !spec.table.isConnected) { return; }
     if (spec.kind === "add") { return; }
+    /* v2.211: hold the pointer for the drag's life, so
+       a fast travel cannot hand the gesture to another
+       element or lose the release outside the window. */
+    if (hit.el.setPointerCapture &&
+        ev.pointerId !== undefined) {
+      try { hit.el.setPointerCapture(ev.pointerId); }
+      catch (err) {}
+    }
     selectStripSlice(spec);
     if (spec.kind === "col") {
       stripDrag = { kind: "col", table: spec.table,
@@ -6845,11 +6867,16 @@ function wireCellMenu() {
     showStripDragLine(stripDrag, frame, stripDrag.insert);
   });
   document.addEventListener("pointerup", function () {
-    if (!stripDrag) { return; }
+    const wasPress = stripPressActive;
+    stripPressActive = false;
+    if (!stripDrag) {
+      if (wasPress) { updateCellMenu(); }
+      return;
+    }
     const drag = stripDrag;
     stripDrag = null;
     hideStripDragLine();
-    if (!drag.active) { return; }
+    if (!drag.active) { updateCellMenu(); return; }
     if (drag.kind === "col") {
       if (moveTableColumn(drag.table, drag.from, drag.insert)) {
         selectStripSlice({ kind: "col", table: drag.table,
@@ -6864,9 +6891,17 @@ function wireCellMenu() {
     }
     refreshTableChrome();
   });
+  document.addEventListener("pointercancel", function () {
+    if (!stripDrag && !stripPressActive) { return; }
+    stripDrag = null;
+    stripPressActive = false;
+    hideStripDragLine();
+    updateCellMenu();
+  });
   document.addEventListener("keydown", function (ev) {
     if (ev.key === "Escape" && stripDrag) {
       stripDrag = null;
+      stripPressActive = false;
       hideStripDragLine();
     }
   });
@@ -7061,6 +7096,16 @@ function wireCellMenu() {
       closeCellMenu();
       updateCellMenu();
     });
+  /* v2.211: scroll events do not bubble, but a capture
+     phase listener hears them from every scroller, so
+     the selector strips re-park from live geometry no
+     matter which container actually scrolls the note:
+     parked from viewport rects in a fixed layer, they
+     otherwise stand still on the page while the table
+     moves under them. */
+  document.addEventListener("scroll", function () {
+    positionAllTableStrips();
+  }, true);
 }
 
 /* ----- v2.92.0: table resizing ------------------------------------------------
@@ -7583,6 +7628,14 @@ function onTableResizeDragMove(ev) {
       drag.changed = true;
     }
   }
+  /* v2.211: the drag's table keeps its grid dress and
+     its selector strips track the live geometry, move
+     by move, instead of standing at the pre-drag size
+     until some later watcher happens to re-park them. */
+  if (drag.table && drag.table.isConnected) {
+    drag.table.classList.add("ss-gridlines");
+  }
+  positionAllTableStrips();
 }
 
 /* End a drag: detach the drag listeners, then commit or
@@ -7633,8 +7686,16 @@ function tableResizeAfterReplace(drag) {
   tableResizeRestoreSelection(drag.selSnapshot);
   tableResizeTable = null;
   tableResizeSig = "";
+  /* v2.211: the replacement element is a fresh parse
+     with no gridline signature entry, and both watchers
+     stood down for the whole drag, so the grid and the
+     strips are re-dressed here, unconditionally, rather
+     than riding on updateCellMenu's conditional tail:
+     that chain is how a resized table lost its grid. */
+  refreshTableGridlines();
   updateTableMenu();
   updateCellMenu();
+  refreshTableChrome();
   updateTableResizeFurniture();
 }
 
