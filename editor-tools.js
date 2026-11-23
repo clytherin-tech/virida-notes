@@ -3620,6 +3620,39 @@ function markDirty() {
   autosave();
 }
 
+/* v2.209: one toolbar press over a whole cell range. Clear
+   formatting runs per cell. A mark takes one direction for
+   the whole range, read off its first cell (the Docs rule):
+   a fully marked first cell means the press unmakes the
+   mark, anything else makes it everywhere; each cell whose
+   state differs from that direction toggles once. */
+function applyToolbarCommandToRange(cmd, cells) {
+  if (cmd === "clear") {
+    cells.forEach(function (cell) {
+      selectWholeCell(cell);
+      clearFormattingExtended();
+    });
+    settleToolbarRangeSelection();
+    return;
+  }
+  const execName = cmd === "strike" ? "strikeThrough" : cmd;
+  selectWholeCell(cells[0]);
+  let marked = false;
+  try { marked = !!document.queryCommandState(execName); }
+  catch (err) { marked = false; }
+  const target = !marked;
+  cells.forEach(function (cell) {
+    selectWholeCell(cell);
+    let state = false;
+    try { state = !!document.queryCommandState(execName); }
+    catch (err) { state = false; }
+    if (state !== target) {
+      document.execCommand(execName, false, null);
+    }
+  });
+  settleToolbarRangeSelection();
+}
+
 /* Toolbar commands. execCommand is deprecated but universally supported
    for contenteditable in current browsers, and it keeps v1.0 dependency
    free. The checklist command converts the line the caret is on into
@@ -3646,7 +3679,16 @@ function runToolbarCommand(cmd) {
      dirty mark and no decoration pass; the flag
      is read where markDirty stands at the end. */
   let listPressNoOp = false;
-  if (cmd === "bold" || cmd === "italic" || cmd === "underline") {
+  /* v2.209: with a multi-cell range standing, the marks and
+     Clear formatting apply to every cell of the range instead
+     of the lone text selection. */
+  const rangeCells = (cmd === "bold" || cmd === "italic" ||
+    cmd === "underline" || cmd === "strike" || cmd === "clear")
+    ? toolbarRangeCells() : null;
+  if (rangeCells) {
+    applyToolbarCommandToRange(cmd, rangeCells);
+  } else if (cmd === "bold" || cmd === "italic" ||
+      cmd === "underline") {
     document.execCommand(cmd, false, null);
   } else if (cmd === "strike") {
     document.execCommand("strikeThrough", false, null);
@@ -5026,6 +5068,43 @@ function restoreFormatSelection() {
   return false;
 }
 
+/* v2.209: the multi-cell range as a toolbar target. The range
+   state lives in editor.js (currentRangeCells); when a range
+   stands, the formatting commands apply to every cell of it,
+   one cell's whole contents at a time, and the selection is
+   settled back onto the range's anchor cell at the end, so
+   the range itself (and its highlight) survives the press. */
+function toolbarRangeCells() {
+  if (typeof currentRangeCells !== "function") { return null; }
+  return currentRangeCells();
+}
+
+/* A range covering one cell's whole contents. */
+function cellContentsRange(cell) {
+  const range = document.createRange();
+  range.selectNodeContents(cell);
+  return range;
+}
+
+/* Put the live selection over one cell's whole contents. */
+function selectWholeCell(cell) {
+  const sel = window.getSelection();
+  if (!sel) { return; }
+  sel.removeAllRanges();
+  sel.addRange(cellContentsRange(cell));
+}
+
+/* After a range-wide apply, stand the live selection back in
+   the range's anchor cell and make it the saved format
+   selection, so the editor's anchor tracking sees the caret
+   home and leaves the range standing. */
+function settleToolbarRangeSelection() {
+  if (typeof cellSelAnchor === "undefined" || !cellSelAnchor ||
+      !document.body.contains(cellSelAnchor)) { return; }
+  savedFormatRange = cellContentsRange(cellSelAnchor);
+  restoreFormatSelection();
+}
+
 /* ----- styled span helpers ----------------------------------------------
    wrapRangeTextWithSpan wraps every text node touched by the range in
    its own span carrying the given CSS properties. Wrapping per text
@@ -5108,6 +5187,21 @@ function insertStyledCaretSpan(styleProps) {
    shapes it has. Shared by font family, font size, and the default
    color reset, so all three behave identically. */
 function applySpanStyle(styleProps) {
+  /* v2.209: a standing cell range takes the style cell by
+     cell, through the same single-selection path below. */
+  const cells = toolbarRangeCells();
+  if (cells) {
+    cells.forEach(function (cell) {
+      savedFormatRange = cellContentsRange(cell);
+      applySpanStyleNow(styleProps);
+    });
+    settleToolbarRangeSelection();
+    return;
+  }
+  applySpanStyleNow(styleProps);
+}
+
+function applySpanStyleNow(styleProps) {
   restoreFormatSelection();
   const bodyEl = document.getElementById("noteBody");
   const sel = window.getSelection();
@@ -5140,14 +5234,18 @@ function applyFontSize(pt) {
    span with color: inherit, which renders in the note's own text color
    on every device and stays removable by Remove formatting. */
 function applyTextColor(value, opts) {
-  restoreFormatSelection();
-  if (value === "inherit") {
-    applySpanStyle({ color: "inherit" });
+  /* v2.209: a standing cell range takes the color cell by
+     cell, through the same single-selection path below; the
+     bar, menu, and dirty tails run once. */
+  const cells = toolbarRangeCells();
+  if (cells) {
+    cells.forEach(function (cell) {
+      savedFormatRange = cellContentsRange(cell);
+      applyTextColorNow(value);
+    });
+    settleToolbarRangeSelection();
   } else {
-    let ok = false;
-    try { ok = document.execCommand("foreColor", false, value); }
-    catch (err) { ok = false; }
-    if (!ok) { applySpanStyle({ color: value }); }
+    applyTextColorNow(value);
   }
   document.getElementById("textColorBar").style.background =
     value === "inherit" ? "" : value;
@@ -5157,6 +5255,18 @@ function applyTextColor(value, opts) {
      before. */
   if (!opts || !opts.keepMenus) { closeToolbarMenus(); }
   markDirty();
+}
+
+function applyTextColorNow(value) {
+  restoreFormatSelection();
+  if (value === "inherit") {
+    applySpanStyleNow({ color: "inherit" });
+  } else {
+    let ok = false;
+    try { ok = document.execCommand("foreColor", false, value); }
+    catch (err) { ok = false; }
+    if (!ok) { applySpanStyleNow({ color: value }); }
+  }
 }
 
 /* Highlight: hiliteColor is the modern command name; backColor is the
@@ -5179,6 +5289,27 @@ function applyTextColor(value, opts) {
    the proven path. A range that really was painted verifies clean
    and gains no second span layer. */
 function applyHighlight(value, opts) {
+  /* v2.209: a standing cell range takes the highlight cell
+     by cell, through the same single-selection path below;
+     the bar, menu, and dirty tails run once. */
+  const cells = toolbarRangeCells();
+  if (cells) {
+    cells.forEach(function (cell) {
+      savedFormatRange = cellContentsRange(cell);
+      applyHighlightNow(value);
+    });
+    settleToolbarRangeSelection();
+  } else {
+    applyHighlightNow(value);
+  }
+  document.getElementById("highlightBar").style.background =
+    value === "transparent" ? "" : value;
+  /* v2.24.2: keepMenus, as in applyTextColor above. */
+  if (!opts || !opts.keepMenus) { closeToolbarMenus(); }
+  markDirty();
+}
+
+function applyHighlightNow(value) {
   restoreFormatSelection();
   let ok = false;
   try { ok = document.execCommand("hiliteColor", false, value); }
@@ -5187,13 +5318,8 @@ function applyHighlight(value, opts) {
     try { ok = document.execCommand("backColor", false, value); }
     catch (err) { ok = false; }
   }
-  if (!ok) { applySpanStyle({ backgroundColor: value }); }
+  if (!ok) { applySpanStyleNow({ backgroundColor: value }); }
   if (value !== "transparent") { ensureHighlightLanded(value); }
-  document.getElementById("highlightBar").style.background =
-    value === "transparent" ? "" : value;
-  /* v2.24.2: keepMenus, as in applyTextColor above. */
-  if (!opts || !opts.keepMenus) { closeToolbarMenus(); }
-  markDirty();
 }
 
 /* v2.13.1: is this background value an actual visible color? "No

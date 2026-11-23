@@ -166,6 +166,16 @@ function canonicalizeAttachmentPlaceholders(html) {
     el.classList.remove("ss-cell-selected");
     if (!el.classList.length) { el.removeAttribute("class"); }
   });
+  /* v2.209: the edit-mode gridlines (ss-gridlines on the table
+     being edited, ss-gridline-cell on its borderless cells) are
+     runtime only like the selection above: they paint the grid
+     while the caret is in the table and must never be saved. */
+  holder.querySelectorAll(".ss-gridlines, .ss-gridline-cell")
+    .forEach(function (el) {
+      el.classList.remove("ss-gridlines");
+      el.classList.remove("ss-gridline-cell");
+      if (!el.classList.length) { el.removeAttribute("class"); }
+    });
   /* v2.99.0: a code block's caret furniture (the
      trailing br.ss-code-caret-br that gives an
      empty last line its box, see syncCodeCaretBr)
@@ -5137,6 +5147,11 @@ function closeTableMenu() {
   if (btn) { btn.setAttribute("aria-expanded", "false"); }
   tableMenuActionCell = null;
   tableMenuActionTable = null;
+  /* v2.209: the cell section lives in this menu now, so
+     closing it also drops the cell section's capture. */
+  cellActionCell = null;
+  cellActionTable = null;
+  cellActionCells = [];
 }
 
 /* Hide the whole table control set and forget the tracked cell.
@@ -5172,22 +5187,45 @@ function syncTableMenuGuards() {
 
 /* Open the menu under the Table button. The acting cell and table
    are captured now: clicking menu items moves focus out of the
-   editor, and the actions must still hit the cell the user meant. */
+   editor, and the actions must still hit the cell the user meant.
+   v2.209: the menu is the one table menu now, so its cell
+   section captures alongside the structural section: the
+   multi-cell range when one is selected in this table, otherwise
+   the caret's cell alone. Sort, filter, and the header toggle
+   anchor to the caret's cell either way. */
 function openTableMenu() {
   if (!tableMenuCell || !tableMenuTable) { return; }
-  /* v2.3: the cell menu and the table menu are never open at once. */
-  closeCellMenu();
   tableMenuActionCell = tableMenuCell;
   tableMenuActionTable = tableMenuTable;
+  const range = currentRangeCells();
+  cellActionCell = tableMenuCell;
+  cellActionTable = tableMenuTable;
+  cellActionCells = (range &&
+    range[0].closest("table") === tableMenuTable)
+    ? range.slice() : [tableMenuCell];
   syncTableMenuGuards();
+  syncCellMenuState();
+  hideTableSelectStrips();
   const menu = document.getElementById("tableMenu");
   const btn = document.getElementById("tableMenuBtn");
   menu.classList.remove("hidden");
   btn.setAttribute("aria-expanded", "true");
+  positionTableMenu();
+}
+
+/* Park the open menu under the Table button, flipping above it
+   when it would spill off the bottom. Shared by the open and by
+   the cell section's sub panels, which change the menu's height
+   under its button as they open and close. */
+function positionTableMenu() {
+  const menu = document.getElementById("tableMenu");
+  const btn = document.getElementById("tableMenuBtn");
+  if (!menu || !btn) { return; }
   const btnRect = btn.getBoundingClientRect();
-  const width = menu.offsetWidth || 190;
-  const height = menu.offsetHeight || 320;
-  let left = Math.max(8, Math.min(btnRect.left, window.innerWidth - width - 8));
+  const width = menu.offsetWidth || 240;
+  const height = menu.offsetHeight || 420;
+  let left = Math.max(8, Math.min(btnRect.left,
+    window.innerWidth - width - 8));
   let top = btnRect.bottom + 4;
   if (top + height > window.innerHeight - 8) {
     top = Math.max(8, btnRect.top - height - 4);
@@ -5294,49 +5332,60 @@ function runTableAction(action) {
 }
 
 /* ----- v2.3: per-cell table menu and multi-cell selection -----------------
-   The per-cell companion to the v2.2 table editing above, modeled on
-   the reference menu Chris provided. A small three dot button
-   (#cellMenuBtn) parks inset in the upper right corner of one cell
-   of a table (inset, so it never collides with the v2.2 Table
-   button, which parks above the table's outer top right) and opens
-   #cellMenu: Sort column, Filter column, a Header row toggle, Cell
+   v2.209 reshapes this section to the Google Docs model Chris
+   approved on 2026-11-23 (preview first, per his rule). Through
+   v2.208.0 a small three dot button (#cellMenuBtn) parked inset
+   in the upper right corner of one cell and opened #cellMenu:
+   Sort column, Filter column, a Header row toggle, Cell
    background, Border style, Border width, Reset style, Align
-   content, Set table width, and Copy cell. A third piece of
-   furniture, #tableFilterChip, parks above the table's top left
-   while that table has an active filter and clears all of its
-   filters when clicked. All three live OUTSIDE #noteBody, like the
-   rest of the table furniture, so they can never be saved.
-   The button follows the cell most recently hovered with the mouse,
-   or the caret's cell when the keyboard is being used. The acting
-   cell (and, with a range selected, the whole captured range) is
-   settled before the menu opens, and the menu acts only on that
-   capture, so clicks inside the menu can never retarget it.
-   State lives on the note's own markup, so it survives the collect,
-   save, reload round trip untouched: the sort state as data-ss-sort
-   ("<col>:asc" or "<col>:desc") and the filters as data-ss-filters
-   (a JSON object mapping column index to filter text) on the table,
-   filtered out rows carrying the class ss-filtered-out (reapplied
-   by applyAllTableFilters whenever a note renders), and cell
+   content, Set table width, and Copy cell. In a narrow column
+   the button sat on top of the cell's text, so the button and
+   its menu are retired: the cell section lives in the v2.2
+   Table menu now (its markup moved into #tableMenu, ids and
+   sub panels intact), opens from the Table button, and captures
+   the same way it always did (below). Nothing overlays a cell
+   again. A third piece of furniture, #tableFilterChip, parks
+   above the table's top left while that table has an active
+   filter and clears all of its filters when clicked. All of it
+   lives OUTSIDE #noteBody, like the rest of the table
+   furniture, so it can never be saved.
+   The acting cell (and, with a range selected, the whole
+   captured range) is settled before the menu opens, and the
+   menu acts only on that capture, so clicks inside the menu
+   can never retarget it.
+   State lives on the note's own markup, so it survives the
+   collect, save, reload round trip untouched: the sort state
+   as data-ss-sort ("<col>:asc" or "<col>:desc") and the
+   filters as data-ss-filters (a JSON object mapping column
+   index to filter text) on the table, filtered out rows
+   carrying the class ss-filtered-out (reapplied by
+   applyAllTableFilters whenever a note renders), and cell
    background, border style and width, vertical alignment, and
-   column width as inline styles on the cells. The ONE class in
-   this section that must NOT survive is ss-cell-selected, the
-   multi-cell highlight: it is runtime only, and
-   canonicalizeAttachmentPlaceholders strips it on every save
-   (see the comment there for the deliberate contrast).
-   Multi-cell selection: dragging the mouse from one cell into a
-   different cell selects the rectangle between them (dragging
-   inside a single cell keeps the normal text selection; range mode
-   starts only once the pointer enters another cell of the same
-   table), and Shift+click extends a rectangle from the anchored
-   cell to the clicked one. The formatting actions (background,
-   border style and width, alignment, reset, column width) apply to
-   every cell in the captured range, and Copy cell copies the
-   rectangle; sort, filter, and the header toggle stay anchored to
-   the one cell the menu was opened from. Applying a format keeps
-   the selection, so several formats can be applied in a row;
-   structural changes (sort, filter changes, the header toggle, and
-   the v2.2 row and column operations) clear it, as do note
-   switches, editor locks, clicks outside the table, and Escape. */
+   column width as inline styles on the cells. The classes in
+   this section that must NOT survive are ss-cell-selected, the
+   multi-cell highlight, and the v2.209 edit-mode gridline
+   classes (ss-gridlines and ss-gridline-cell): all runtime
+   only, and canonicalizeAttachmentPlaceholders strips them on
+   every save (see the comment there for the deliberate
+   contrast with ss-filtered-out).
+   Multi-cell selection: dragging the mouse from one cell into
+   a different cell selects the rectangle between them (dragging
+   inside a single cell keeps the normal text selection; range
+   mode starts only once the pointer enters another cell of the
+   same table), Shift+click extends a rectangle from the
+   anchored cell to the clicked one, v2.209 adds Shift+arrow
+   extension and the selector strips (a click on a column or
+   row segment selects the whole column or row), and the
+   formatting actions (background, border style and width,
+   alignment, reset, column width, and now the toolbar's own
+   marks, colors, and clear formatting, see editor-tools.js)
+   apply to every cell in the captured range; sort, filter, and
+   the header toggle stay anchored to the one cell the menu was
+   opened from. Applying a format keeps the selection, so
+   several formats can be applied in a row; structural changes
+   (sort, filter changes, the header toggle, and the v2.2 row
+   and column operations) clear it, as do note switches, editor
+   locks, clicks outside the table, and Escape. */
 let cellMenuCell = null;      /* the cell the three dot button sits on */
 let cellMenuTable = null;     /* that cell's table */
 let cellHoverCell = null;     /* the cell the pointer last hovered */
@@ -5683,23 +5732,208 @@ function setCellAnchor(cell) {
   paintCellSelection();
 }
 
-/* ----- the three dot button, the chip, and the menu ----- */
+/* ----- v2.209: edit-mode gridlines and selector strips ----- */
 
-/* Park the three dot button inset in the upper right corner of
-   its cell, clamped into the viewport. */
-function positionCellMenuBtn() {
-  const btn = document.getElementById("cellMenuBtn");
-  if (!btn || !cellMenuCell) { return; }
-  const rect = cellMenuCell.getBoundingClientRect();
-  const width = btn.offsetWidth || 24;
-  const height = btn.offsetHeight || 22;
-  let left = rect.right - width - 4;
-  left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
-  let top = rect.top + 4;
-  top = Math.max(8, Math.min(top, window.innerHeight - height - 8));
-  btn.style.left = left + "px";
-  btn.style.top = top + "px";
+/* The table currently wearing the edit-mode gridlines, and the
+   signature its per-cell marks were computed from. */
+let gridlineTable = null;
+let gridlineSig = "";
+
+/* A cheap fingerprint of a table's shape and cell styles, so
+   the borderless-cell marks recompute only when something
+   that could change them did. */
+function tableGridlineSig(table) {
+  let styles = 0;
+  Array.prototype.forEach.call(table.querySelectorAll("th, td"),
+    function (cell) {
+      styles += (cell.getAttribute("style") || "").length;
+    });
+  return table.rows.length + "/" +
+    (table.rows[0] ? table.rows[0].cells.length : 0) + "/" + styles;
 }
+
+/* Stand the edit-mode gridlines on one table (or clear them,
+   with null): the table takes the ss-gridlines class, whose
+   rule strengthens every saved border's color while the table
+   is being edited, and each cell whose saved border does not
+   paint (computed style none) takes ss-gridline-cell, whose
+   dashed border stands in for the missing one. Both classes
+   are runtime only: canonicalization strips them, so a note
+   saved mid-edit carries neither, and the note's own borders
+   are never touched. */
+function applyTableGridlines(table) {
+  if (gridlineTable && gridlineTable !== table) {
+    gridlineTable.classList.remove("ss-gridlines");
+    gridlineTable.querySelectorAll(".ss-gridline-cell")
+      .forEach(function (el) {
+        el.classList.remove("ss-gridline-cell");
+        if (!el.classList.length) { el.removeAttribute("class"); }
+      });
+    gridlineTable = null;
+    gridlineSig = "";
+  }
+  if (!table) { return; }
+  const sig = tableGridlineSig(table);
+  if (gridlineTable === table && gridlineSig === sig) { return; }
+  gridlineTable = table;
+  gridlineSig = sig;
+  table.classList.add("ss-gridlines");
+  Array.prototype.forEach.call(table.querySelectorAll("th, td"),
+    function (cell) {
+      let none = false;
+      try {
+        none = window.getComputedStyle(cell).borderTopStyle ===
+          "none";
+      } catch (err) { none = false; }
+      const had = cell.classList.contains("ss-gridline-cell");
+      if (none && !had) { cell.classList.add("ss-gridline-cell"); }
+      if (!none && had) {
+        cell.classList.remove("ss-gridline-cell");
+        if (!cell.classList.length) {
+          cell.removeAttribute("class");
+        }
+      }
+    });
+}
+
+/* Selector strip state: the table the strips serve and the
+   signature they were built from (columns / rows, the same
+   signature the resize furniture uses). */
+let tableStripTable = null;
+let tableStripSig = "";
+
+/* Forget the strips and the Add row bar entirely. */
+function hideTableSelectStrips() {
+  tableStripTable = null;
+  tableStripSig = "";
+  const layer = document.getElementById("tableSelectStrips");
+  if (layer) { layer.innerHTML = ""; }
+  const addBtn = document.getElementById("tableAddRowBtn");
+  if (addBtn) { addBtn.classList.add("hidden"); }
+}
+
+/* Build the strip segments for one table: one segment per
+   column parked above the table (a click selects the column)
+   and one per visible row parked at its left (a click selects
+   the row; body rows carry their number, the way the preview
+   Chris approved showed them). Zero height rows (a filter
+   hides them) get no segment: they have no row on screen to
+   select. */
+function buildTableSelectStrips(table) {
+  const layer = document.getElementById("tableSelectStrips");
+  if (!layer) { return; }
+  layer.innerHTML = "";
+  function addSeg(kind, spec, label) {
+    const el = document.createElement("div");
+    el.className = "ss-tsel-seg";
+    el.setAttribute("data-kind", kind);
+    spec.kind = kind;
+    spec.table = table;
+    el._ssStripSpec = spec;
+    if (label) { el.textContent = label; }
+    layer.appendChild(el);
+  }
+  const cols = tableResizeGridColumns(table);
+  for (let c = 0; c < cols; c++) { addSeg("col", { index: c }, ""); }
+  let bodyNo = 0;
+  Array.prototype.forEach.call(table.rows, function (row) {
+    const inHeader = row.parentElement &&
+      row.parentElement.tagName === "THEAD";
+    if (!inHeader) { bodyNo++; }
+    if (row.getBoundingClientRect().height > 0) {
+      addSeg("row", { rowEl: row }, inHeader ? "" : String(bodyNo));
+    }
+  });
+}
+
+/* (Re)park the segments and the Add row bar on the served
+   table from its live geometry. */
+function positionTableSelectStrips() {
+  const table = tableStripTable;
+  const layer = document.getElementById("tableSelectStrips");
+  const addBtn = document.getElementById("tableAddRowBtn");
+  if (!table || !layer) { return; }
+  if (!table.isConnected) { hideTableSelectStrips(); return; }
+  const rect = table.getBoundingClientRect();
+  if (!rect.width || !rect.height) { return; }
+  const cols = tableResizeGridColumns(table);
+  const bounds = cols ? tableResizeColumnBounds(table, cols) : null;
+  Array.prototype.forEach.call(layer.children, function (el) {
+    const spec = el._ssStripSpec;
+    if (!spec) { return; }
+    if (spec.kind === "col" && bounds) {
+      el.style.left = bounds[spec.index] + "px";
+      el.style.top = Math.max(0, rect.top - 17) + "px";
+      el.style.width = Math.max(14,
+        bounds[spec.index + 1] - bounds[spec.index] - 2) + "px";
+      el.style.height = "15px";
+    } else if (spec.kind === "row" && spec.rowEl) {
+      const r = spec.rowEl.getBoundingClientRect();
+      el.style.left = Math.max(0, rect.left - 24) + "px";
+      el.style.top = r.top + "px";
+      el.style.width = "22px";
+      el.style.height = Math.max(14, r.height - 2) + "px";
+    }
+  });
+  if (addBtn) {
+    addBtn.classList.remove("hidden");
+    addBtn.style.left = rect.left + "px";
+    addBtn.style.top = (rect.bottom + 6) + "px";
+  }
+}
+
+/* The strips watcher: serve the tracked table (the same table
+   the filter chip serves) while the note is editable and no
+   menu is open, and nothing in every other case. */
+function updateTableSelectStrips() {
+  const layer = document.getElementById("tableSelectStrips");
+  if (!layer) { return; }
+  const menu = document.getElementById("tableMenu");
+  if (!cellMenuTable || !cellEditorEditable() ||
+      (menu && !menu.classList.contains("hidden"))) {
+    hideTableSelectStrips();
+    return;
+  }
+  const table = cellMenuTable;
+  const sig = tableResizeGridColumns(table) + "/" + table.rows.length;
+  if (table !== tableStripTable || sig !== tableStripSig) {
+    tableStripTable = table;
+    tableStripSig = sig;
+    buildTableSelectStrips(table);
+  }
+  positionTableSelectStrips();
+}
+
+/* Select a whole column or row as the multi-cell range: the
+   anchor and focus land on its end cells and the range paints,
+   so the toolbar and the menu act on it like any other range. */
+function selectTableSlice(anchorCell, focusCell) {
+  if (!anchorCell || !focusCell) { return; }
+  cellSelAnchor = anchorCell;
+  cellSelFocus = focusCell;
+  const sel = window.getSelection();
+  if (sel) { sel.removeAllRanges(); }
+  paintCellSelection();
+}
+
+/* Append one empty row at the table's end, in the last row's
+   own section with cells of its shape, and land the caret in
+   its first cell: the preview's Add row bar. */
+function addRowToTableEnd(table) {
+  if (!table || !table.rows.length) { return; }
+  const last = table.rows[table.rows.length - 1];
+  const newRow = document.createElement("tr");
+  for (let i = 0; i < last.cells.length; i++) {
+    newRow.appendChild(emptyTableCell(tableCellTagFor(last, i)));
+  }
+  last.parentElement.appendChild(newRow);
+  if (newRow.cells[0]) { placeCaretIn(newRow.cells[0], 0); }
+  markDirty();
+  updateCellMenu();
+}
+
+/* ----- the chip and the merged menu's cell section ----- */
+
 
 /* Park the filter chip above the table's top left (the Table
    button owns the top right), flipping below the table when it
@@ -5730,25 +5964,26 @@ function updateFilterChip() {
   positionFilterChip();
 }
 
-/* Furniture watcher: park the three dot button on the hovered
-   cell, or on the caret's cell when the pointer is not over the
-   body, and hide everything when neither is inside a table of an
-   editable note. Wired to document mouseover (which keeps the
-   hover cell current), body clicks and keyups, and document
-   selectionchange. While the menu itself is open it stands still:
-   the menu acts on its capture, not on live tracking. */
+/* Furniture watcher: track the hovered cell, or the caret's
+   cell when the pointer is not over the body, and stand the
+   table furniture (the filter chip, the edit-mode gridlines,
+   the selector strips) on its table; hide everything when
+   neither is inside a table of an editable note. Wired to
+   document mouseover (which keeps the hover cell current),
+   body clicks and keyups, and document selectionchange. While
+   the menu itself is open it stands still: the menu acts on
+   its capture, not on live tracking. */
 function updateCellMenu() {
-  const btn = document.getElementById("cellMenuBtn");
-  if (!btn) { return; }
   const appEl = document.getElementById("app");
   if (!appEl || appEl.classList.contains("hidden")) {
     hideCellMenu();
     return;
   }
   if (!cellEditorEditable()) { hideCellMenu(); return; }
-  const menu = document.getElementById("cellMenu");
+  const menu = document.getElementById("tableMenu");
   if (menu && !menu.classList.contains("hidden")) { return; }
   if (cellDragState && cellDragState.active) { return; }
+  if (tableResizeDrag) { return; }
   const bodyEl = document.getElementById("noteBody");
   let cell = null;
   if (cellHoverCell && bodyEl.contains(cellHoverCell)) {
@@ -5763,34 +5998,33 @@ function updateCellMenu() {
   cellMenuCell = cell;
   cellMenuTable = cell.closest("table");
   if (!cellMenuTable) { hideCellMenu(); return; }
-  btn.classList.remove("hidden");
-  positionCellMenuBtn();
   updateFilterChip();
+  applyTableGridlines(cellMenuTable);
+  updateTableSelectStrips();
 }
 
-/* Close just the menu popup (the button and chip stay). */
+/* Close the menu popup. v2.209: the cell section lives in
+   the table menu now, so closing the cell menu is closing the
+   one menu; the name stands for the many call sites that grew
+   up around it, and the chip and strips stay as they are. */
 function closeCellMenu() {
-  const menu = document.getElementById("cellMenu");
-  if (menu) { menu.classList.add("hidden"); }
-  const btn = document.getElementById("cellMenuBtn");
-  if (btn) { btn.setAttribute("aria-expanded", "false"); }
-  cellActionCell = null;
-  cellActionTable = null;
-  cellActionCells = [];
+  closeTableMenu();
 }
 
 /* Hide the whole cell control set and forget the tracked cell.
-   Called when the pointer and caret have left the table, when the
-   note switches, and when the editor locks. */
+   Called when the pointer and caret have left the table, when
+   the note switches, and when the editor locks. */
 function hideCellMenu() {
   closeCellMenu();
   cellMenuCell = null;
   cellMenuTable = null;
   cellHoverCell = null;
-  const btn = document.getElementById("cellMenuBtn");
-  if (btn) { btn.classList.add("hidden"); }
   const chip = document.getElementById("tableFilterChip");
   if (chip) { chip.classList.add("hidden"); }
+  /* v2.209: the gridlines and the selector strips follow
+     the same hides. */
+  applyTableGridlines(null);
+  hideTableSelectStrips();
   /* v2.92.0: the resize furniture follows the same hides
      (note switches and editor locks land here). */
   hideTableResizeFurniture();
@@ -5832,49 +6066,9 @@ function syncCellMenuState() {
   });
 }
 
-/* Position the open menu under its button, right edges aligned,
-   flipping above the button when it would spill off the bottom. */
-function positionCellMenu() {
-  const menu = document.getElementById("cellMenu");
-  const btn = document.getElementById("cellMenuBtn");
-  if (!menu || !btn) { return; }
-  const btnRect = btn.getBoundingClientRect();
-  const width = menu.offsetWidth || 240;
-  const height = menu.offsetHeight || 420;
-  let left = Math.max(8, Math.min(btnRect.right - width,
-    window.innerWidth - width - 8));
-  let top = btnRect.bottom + 4;
-  if (top + height > window.innerHeight - 8) {
-    top = Math.max(8, btnRect.top - height - 4);
-  }
-  menu.style.left = left + "px";
-  menu.style.top = top + "px";
-}
-
-/* Open the menu from the three dot button. The acting cells are
-   captured now: the multi-cell range when one is selected in this
-   table, otherwise the button's cell alone. Sort, filter, and the
-   header toggle anchor to the button's cell either way. Opening
-   the cell menu closes the v2.2 table menu, and vice versa. */
-function openCellMenu() {
-  if (!cellMenuCell || !cellMenuTable) { return; }
-  closeTableMenu();
-  const range = currentRangeCells();
-  cellActionCell = cellMenuCell;
-  cellActionTable = cellMenuTable;
-  cellActionCells = (range &&
-    range[0].closest("table") === cellMenuTable)
-    ? range.slice() : [cellMenuCell];
-  syncCellMenuState();
-  const menu = document.getElementById("cellMenu");
-  const btn = document.getElementById("cellMenuBtn");
-  menu.classList.remove("hidden");
-  btn.setAttribute("aria-expanded", "true");
-  positionCellMenu();
-}
 
 /* Show one sub panel and close the others, then reposition: the
-   menu's height changed under its button. */
+   menu's height changed under the Table button. */
 function toggleCellSub(subId) {
   CELL_SUB_IDS.forEach(function (id) {
     if (id !== subId) {
@@ -5884,7 +6078,7 @@ function toggleCellSub(subId) {
   const sub = document.getElementById(subId);
   const willShow = sub.classList.contains("hidden");
   sub.classList.toggle("hidden", !willShow);
-  positionCellMenu();
+  positionTableMenu();
   if (willShow && subId === "cellFilterSub") {
     const input = document.getElementById("cellFilterInput");
     input.focus();
@@ -6249,8 +6443,14 @@ function wireCellMenu() {
   document.addEventListener("mouseover", function (ev) {
     const target = ev.target;
     if (!target || !target.closest) { return; }
-    if (target.closest("#cellMenu") || target.closest("#cellMenuBtn") ||
+    if (target.closest("#tableMenu") ||
+        target.closest("#tableMenuBtn") ||
         target.closest("#tableFilterChip")) { return; }
+    /* v2.209: the selector strips and the Add row bar are
+       table furniture too: resting on them is not leaving
+       the table. */
+    if (target.closest("#tableSelectStrips") ||
+        target.closest("#tableAddRowBtn")) { return; }
     /* v2.92.0: the resize furniture is table furniture
        too: resting on a strip or the handle is not
        leaving the table, so the hover cell stands (and
@@ -6332,8 +6532,8 @@ function wireCellMenu() {
   document.addEventListener("mousemove", function (ev) {
     if (!cellDragState || !(ev.buttons & 1)) { return; }
     if (ev.target && ev.target.closest &&
-        (ev.target.closest("#cellMenu") ||
-         ev.target.closest("#cellMenuBtn") ||
+        (ev.target.closest("#tableMenu") ||
+         ev.target.closest("#tableMenuBtn") ||
          ev.target.closest("#tableFilterChip"))) { return; }
     if (!bodyEl.contains(ev.target)) { return; }
     const cell = tableCellFromNode(ev.target);
@@ -6361,19 +6561,36 @@ function wireCellMenu() {
     cellDragState = null;
   });
 
-  /* The three dot button toggles the menu. mousedown is prevented
-     so clicking it never moves the editor selection or the hover
-     tracking away from the cell it sits on; the menu then acts on
-     the cells captured when it opened. */
-  const cellBtn = document.getElementById("cellMenuBtn");
-  cellBtn.addEventListener("mousedown", function (ev) {
+  /* v2.209: the selector strips and the Add row bar. A
+     segment press is prevented, so it never starts a text
+     selection or moves the caret; the click then selects the
+     whole column or row as the range. */
+  const stripLayer = document.getElementById("tableSelectStrips");
+  stripLayer.addEventListener("mousedown", function (ev) {
     ev.preventDefault();
   });
-  cellBtn.addEventListener("click", function () {
-    const menu = document.getElementById("cellMenu");
-    if (menu.classList.contains("hidden")) { openCellMenu(); }
-    else { closeCellMenu(); }
+  stripLayer.addEventListener("click", function (ev) {
+    const el = ev.target && ev.target.closest ?
+      ev.target.closest(".ss-tsel-seg") : null;
+    if (!el || !el._ssStripSpec) { return; }
+    const spec = el._ssStripSpec;
+    const table = spec.table;
+    if (!table || !table.isConnected) { return; }
+    if (spec.kind === "col") {
+      const cells = tableColumnCells(table, spec.index);
+      if (cells.length) {
+        selectTableSlice(cells[0], cells[cells.length - 1]);
+      }
+    } else if (spec.kind === "row" && spec.rowEl &&
+        spec.rowEl.cells.length) {
+      selectTableSlice(spec.rowEl.cells[0],
+        spec.rowEl.cells[spec.rowEl.cells.length - 1]);
+    }
   });
+  document.getElementById("tableAddRowBtn").addEventListener(
+    "click", function () {
+      if (tableStripTable) { addRowToTableEnd(tableStripTable); }
+    });
 
   /* The chip clears every filter on its table at once. */
   document.getElementById("tableFilterChip").addEventListener("click",
@@ -6386,8 +6603,9 @@ function wireCellMenu() {
       updateCellMenu();
     });
 
-  /* One delegated listener for the menu's rows and choices. */
-  document.getElementById("cellMenu").addEventListener("click",
+  /* One delegated listener for the cell section's rows and
+     choices, on the merged menu. */
+  document.getElementById("tableMenu").addEventListener("click",
     function (ev) {
       const target = ev.target;
       if (!target || !target.closest) { return; }
@@ -6448,31 +6666,90 @@ function wireCellMenu() {
   document.addEventListener("click", function (ev) {
     const target = ev.target;
     if (!target || !target.closest) { return; }
-    if (target.closest("#cellMenu") || target.closest("#cellMenuBtn") ||
+    if (target.closest("#tableMenu") ||
+        target.closest("#tableMenuBtn") ||
         target.closest("#tableFilterChip") ||
-        target.closest("#tableMenu") ||
-        target.closest("#tableMenuBtn")) { return; }
-    closeCellMenu();
+        target.closest("#tableSelectStrips") ||
+        target.closest("#tableAddRowBtn")) { return; }
+    /* v2.209: the toolbar is exempt from the selection
+       clearing too: its commands now act on the range, and
+       a press must leave the range standing for the next
+       one. (The menu itself still closes on a toolbar press
+       through the table menu's own outside click rule.) */
+    if (target.closest("#toolbar")) { return; }
+    /* v2.209: this closer no longer closes the menu. The
+       cell section lives in the table menu now, and the
+       table menu's dismissal is judged by its own
+       press-origin-guarded closer in app.js: a press that
+       starts inside the menu and releases outside it must
+       not dismiss it, which a raw click-target judgment
+       here would defeat. What remains is the selection
+       job: a click outside the editor body clears the
+       cell range, and toolbar presses (exempted above)
+       leave the range standing for the command they
+       carry. */
     if (!bodyEl.contains(target)) { clearCellSelection(); }
   });
   document.addEventListener("keydown", function (ev) {
     if (ev.key === "Escape") {
       closeCellMenu();
       clearCellSelection();
+      return;
+    }
+    /* v2.209: Shift+arrow extends the cell range one cell in
+       the arrow's direction, the keyboard counterpart of
+       Shift+click. The caret's cell anchors the range when
+       none stands; at the table's edge the key keeps its
+       ordinary meaning. */
+    if (ev.shiftKey && ev.key.indexOf("Arrow") === 0 &&
+        cellEditorEditable()) {
+      const sel = window.getSelection();
+      /* A standing multi-cell range is the selection of
+         record: extending it dropped the DOM selection by
+         design, so the caret cannot seed the next step.
+         Only with no range standing does the caret's cell
+         anchor a fresh one. */
+      let table = null;
+      let base = null;
+      if (currentRangeCells()) {
+        table = cellSelAnchor.closest("table");
+        base = cellSelFocus;
+      } else {
+        const anchorNode = sel && sel.rangeCount
+          ? sel.anchorNode : null;
+        const caretCell = tableCellFromNode(anchorNode);
+        if (!caretCell) { return; }
+        table = caretCell.closest("table");
+        cellSelAnchor = caretCell;
+        cellSelFocus = caretCell;
+        base = caretCell;
+      }
+      const rows = Array.prototype.slice.call(table.rows);
+      const bRow = base.parentElement;
+      const r = rows.indexOf(bRow);
+      const c = Array.prototype.indexOf.call(bRow.cells, base);
+      if (r < 0 || c < 0) { return; }
+      let nr = r;
+      let nc = c;
+      if (ev.key === "ArrowDown") { nr = r + 1; }
+      else if (ev.key === "ArrowUp") { nr = r - 1; }
+      else if (ev.key === "ArrowRight") { nc = c + 1; }
+      else if (ev.key === "ArrowLeft") { nc = c - 1; }
+      if (nr < 0 || nr >= rows.length || nc < 0 ||
+          nc >= rows[nr].cells.length) { return; }
+      ev.preventDefault();
+      cellSelFocus = rows[nr].cells[nc];
+      if (sel) { sel.removeAllRanges(); }
+      paintCellSelection();
     }
   });
   /* Scrolling the editor moves the table under its parked
-     furniture: the menu closes and the button and chip re-park,
-     mirroring the v2.2 table menu's scroll rule. */
+     furniture: the menu closes and the watchers re-park the
+     chip, the gridlines, and the strips from live geometry. */
   document.querySelector(".editor-scroll").addEventListener("scroll",
     function () {
       closeCellMenu();
-      if (cellMenuTable &&
-          !document.getElementById("cellMenuBtn").classList
-            .contains("hidden")) {
-        positionCellMenuBtn();
-        positionFilterChip();
-      }
+      updateCellMenu();
     });
 }
 
@@ -6856,11 +7133,9 @@ function updateTableResizeFurniture() {
   const layer = document.getElementById("tableResizeStrips");
   const handle = document.getElementById("tableResizeHandle");
   if (!layer || !handle) { return; }
-  const cellMenu = document.getElementById("cellMenu");
   const tableMenu = document.getElementById("tableMenu");
   const menuOpen =
-    (cellMenu && !cellMenu.classList.contains("hidden")) ||
-    (tableMenu && !tableMenu.classList.contains("hidden"));
+    !!(tableMenu && !tableMenu.classList.contains("hidden"));
   if (!cellEditorEditable() || menuOpen) {
     hideTableResizeFurniture();
     return;
@@ -6906,6 +7181,13 @@ function startTableResizeDrag(ev, spec) {
   closeTableMenu();
   closeCellMenu();
   clearCellSelection();
+  /* v2.209: the edit-mode gridlines and selector strips
+     stand down for the drag too, before the snapshot
+     below is taken, so the snapshot (and anything it
+     restores) is the table's own bytes, never furniture
+     paint; the watchers repaint both when the drag ends. */
+  applyTableGridlines(null);
+  hideTableSelectStrips();
   const bodyEl = document.getElementById("noteBody");
   const tables = Array.prototype.slice.call(
     bodyEl.querySelectorAll("table"));

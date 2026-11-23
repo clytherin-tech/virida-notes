@@ -7173,7 +7173,13 @@
                note is editable; the menu's buttons carry
                data-table-action values and one delegated listener runs
                them against the cell the menu was opened from. Both are
-               hidden by default. -->
+               hidden by default. v2.209: the menu also carries the
+               cell section (sort, filter, header row, cell background,
+               borders, alignment, table width, copy), moved here from
+               the retired per-cell three dot menu; its rows carry
+               data-cell-menu and data-cell-* values and run through
+               their own delegated listener against the cell (or the
+               multi-cell range) captured when the menu opened. -->
           <button id="tableMenuBtn" class="hidden" type="button" aria-haspopup="true" aria-expanded="false">Table <span class="table-caret" aria-hidden="true">&#9662;</span></button>
           <div id="tableMenu" class="hidden" role="menu" aria-label="Table options">
             <button class="att-menu-item" type="button" data-table-action="rowAbove">Add row above</button>
@@ -7186,31 +7192,7 @@
             <button class="att-menu-item" type="button" data-table-action="deleteCol">Delete column</button>
             <div class="att-menu-sep"></div>
             <button class="att-menu-item danger" type="button" data-table-action="deleteTable">Delete table</button>
-          </div>
-
-          <!-- v2.3: the per-cell three dot button, its menu, and the
-               filter chip, also SIBLINGS of #noteBody like the table
-               furniture above, so none of them can ever be saved into
-               a note. The script (section 10, per-cell table menu)
-               parks the button inset in the upper right corner of the
-               cell under the pointer or holding the caret; the menu
-               acts on the cell (or the multi-cell range) captured when
-               it opened; the chip appears above a filtered table and
-               clears all of its filters. All three hidden by default. -->
-          <button id="cellMenuBtn" class="hidden" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Cell options">&#8943;</button>
-          <button id="tableFilterChip" class="hidden" type="button" title="Clear all filters on this table">Filter active <span aria-hidden="true">&#215;</span></button>
-          <!-- v2.92.0: table resize furniture, also siblings of
-               #noteBody like the rest of the table furniture, so
-               none of it can ever be saved into a note: a layer of
-               thin drag strips parked over the active table's
-               column and row borders, and a small square handle
-               parked on the table's bottom right corner. The
-               script (the v2.92.0 table resizing section) builds
-               the strips per table; both start empty and hidden. -->
-          <div id="tableResizeStrips" aria-hidden="true"></div>
-          <button id="tableResizeHandle" class="hidden" type="button" aria-label="Resize table" title="Drag to resize the table"></button>
-
-          <div id="cellMenu" class="hidden" role="menu" aria-label="Cell options">
+            <div class="att-menu-sep"></div>
             <button class="att-menu-item cell-flex" type="button" data-cell-menu="sort"><span>Sort column</span><span class="cell-menu-value" id="cellMenuSortValue">None</span></button>
             <div class="cell-sub hidden" id="cellSortSub">
               <button class="att-menu-item" type="button" data-cell-sort="asc">Ascending</button>
@@ -7269,7 +7251,39 @@
             <div class="att-menu-sep"></div>
             <button class="att-menu-item" type="button" id="cellCopyBtn">Copy cell</button>
           </div>
-        </div>
+
+          <!-- v2.3, reshaped in v2.209: the filter chip, a SIBLING
+               of #noteBody like the table furniture above, so it can
+               never be saved into a note. It appears above a filtered
+               table and clears all of its filters when clicked. The
+               per-cell three dot button that stood here retired in
+               v2.209: its menu lives in the Table menu now, and
+               nothing overlays a cell again. Hidden by default. -->
+          <button id="tableFilterChip" class="hidden" type="button" title="Clear all filters on this table">Filter active <span aria-hidden="true">&#215;</span></button>
+          <!-- v2.92.0: table resize furniture, also siblings of
+               #noteBody like the rest of the table furniture, so
+               none of it can ever be saved into a note: a layer of
+               thin drag strips parked over the active table's
+               column and row borders, and a small square handle
+               parked on the table's bottom right corner. The
+               script (the v2.92.0 table resizing section) builds
+               the strips per table; both start empty and hidden. -->
+          <div id="tableResizeStrips" aria-hidden="true"></div>
+          <button id="tableResizeHandle" class="hidden" type="button" aria-label="Resize table" title="Drag to resize the table"></button>
+          <!-- v2.209: the selector strips and the Add row bar,
+               also siblings of #noteBody like the rest of the table
+               furniture, so none of it can ever be saved into a
+               note: thin segments parked above the active table's
+               columns and beside its rows (a click selects the
+               whole column or row), and a small bar parked under
+               the table that appends a row at its end. The script
+               (the v2.209 gridlines and selector strips section)
+               builds the segments per table; both start empty
+               and hidden. -->
+          <div id="tableSelectStrips" aria-hidden="true"></div>
+          <button id="tableAddRowBtn" class="hidden" type="button" title="Add a row at the end of the table">+ Add row</button>
+
+                  </div>
       </div>
       <!-- v2.109.0: the floating Back to top button
            (Chris's checklist item). It lives in a

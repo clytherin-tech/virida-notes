@@ -3168,12 +3168,16 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
 #tableMenuBtn:hover{border-color:var(--accent);color:var(--primary);}
 #tableMenuBtn.hidden{display:none;}
 #tableMenuBtn .table-caret{font-size:10px;line-height:1;}
+/* v2.209: the one table menu carries the cell section too,
+   so it takes the retired cell menu's wider measure and
+   scrolls when the whole list outgrows the viewport. */
 #tableMenu{
-  position:fixed;z-index:61;min-width:190px;padding:6px;
+  position:fixed;z-index:61;min-width:230px;max-width:300px;padding:6px;
   background:var(--surface);border:1px solid var(--border);
   border-top:3px solid var(--brown-600);
   border-radius:var(--radius-card);box-shadow:0 10px 28px rgba(6,32,22,.28);
   display:flex;flex-direction:column;gap:2px;
+  max-height:calc(100vh - 16px);overflow-y:auto;
 }
 #tableMenu.hidden{display:none;}
 .att-menu-item:disabled{opacity:.45;cursor:default;}
@@ -3193,26 +3197,13 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
 #noteBody table.ss-table td.ss-cell-selected{
   box-shadow:inset 0 0 0 2px var(--accent);
 }
-/* v2.3: the per-cell three dot button, its menu, and the filter
-   chip. All three are position:fixed and live OUTSIDE #noteBody
-   (siblings of #tableMenu inside .editor-inner), so they can never
-   be saved into a note. The button is a small square the script
-   parks inset in the upper right corner of one cell (inset, so it
-   never collides with the Table button above the table); the menu
-   hangs under it; the chip is a pill parked above the table's top
-   left (the Table button owns the top right) whenever the active
-   table has filters. */
-#cellMenuBtn{
-  position:fixed;z-index:60;width:24px;height:22px;
-  display:flex;align-items:center;justify-content:center;
-  border-radius:6px;background:var(--surface);
-  border:1px solid var(--border);
-  box-shadow:0 4px 12px rgba(6,32,22,.22);
-  color:var(--muted);font-size:15px;font-weight:700;line-height:1;
-  cursor:pointer;padding:0;
-}
-#cellMenuBtn:hover{border-color:var(--accent);color:var(--primary);}
-#cellMenuBtn.hidden{display:none;}
+/* v2.3: the filter chip, position:fixed and OUTSIDE #noteBody
+   (a sibling of #tableMenu inside .editor-inner), so it can never
+   be saved into a note: a pill parked above the table's top left
+   (the Table button owns the top right) whenever the active table
+   has filters. v2.209: the per-cell three dot button that stood
+   beside it here is retired (its menu lives in the Table menu
+   now), so nothing overlays a cell again. */
 #tableFilterChip{
   position:fixed;z-index:60;
   display:inline-flex;align-items:center;gap:6px;
@@ -3239,7 +3230,8 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
 .ss-tresize-strip[data-kind="col"],
 .ss-tresize-strip[data-kind="right"]{cursor:col-resize;}
 .ss-tresize-strip[data-kind="row"]{cursor:row-resize;}
-.ss-tresize-strip.ss-active{background:var(--accent);opacity:.55;}
+.ss-tresize-strip:hover,.ss-tresize-strip.ss-active{
+  background:var(--accent);opacity:.55;}
 #tableResizeHandle{
   position:fixed;z-index:60;width:14px;height:14px;padding:0;
   touch-action:none;cursor:nwse-resize;
@@ -3248,16 +3240,50 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
 }
 #tableResizeHandle:hover{border-color:var(--accent);}
 #tableResizeHandle.hidden{display:none;}
-
-#cellMenu{
-  position:fixed;z-index:61;min-width:230px;max-width:300px;padding:6px;
-  background:var(--surface);border:1px solid var(--border);
-  border-top:3px solid var(--brown-600);
-  border-radius:var(--radius-card);box-shadow:0 10px 28px rgba(6,32,22,.28);
-  display:flex;flex-direction:column;gap:2px;
-  max-height:calc(100vh - 16px);overflow-y:auto;
+/* v2.209: the edit-mode gridlines and the selector strips.
+   The gridlines paint only while a table is being edited:
+   ss-gridlines strengthens the saved borders' color, and
+   ss-gridline-cell stands a dashed line in for a cell whose
+   saved border does not paint. Both classes are runtime only
+   and stripped on save, so the note's own borders are never
+   touched. The strips are furniture like the resize strips:
+   a layer over the editor (the layer itself never takes a
+   pointer event; each segment does), segments parked above
+   the active table's columns and beside its rows (body rows
+   numbered), and the Add row bar parked under the table. All
+   of it is themed from the same variables as the rest of the
+   table furniture, in both themes. */
+#noteBody table.ss-gridlines th,
+#noteBody table.ss-gridlines td{border-color:var(--muted);}
+#noteBody table th.ss-gridline-cell,
+#noteBody table td.ss-gridline-cell{
+  border:1px dashed var(--border) !important;}
+#tableSelectStrips{position:fixed;inset:0;pointer-events:none;z-index:59;}
+.ss-tsel-seg{
+  position:fixed;pointer-events:auto;box-sizing:border-box;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--soft);border:1px solid var(--border);
+  color:var(--muted);font-size:10.5px;font-weight:600;line-height:1;
+  cursor:pointer;user-select:none;-webkit-user-select:none;
 }
-#cellMenu.hidden{display:none;}
+.ss-tsel-seg:hover{background:var(--accent);border-color:var(--accent);
+  color:var(--surface);}
+.ss-tsel-seg[data-kind="col"]{border-radius:4px 4px 0 0;}
+.ss-tsel-seg[data-kind="row"]{border-radius:4px 0 0 4px;}
+#tableAddRowBtn{
+  position:fixed;z-index:59;
+  display:inline-flex;align-items:center;gap:5px;
+  padding:4px 10px;border-radius:999px;
+  background:var(--surface);border:1px solid var(--border);
+  box-shadow:0 6px 18px rgba(6,32,22,.20);
+  color:var(--primary);font-size:12.5px;font-weight:600;cursor:pointer;
+}
+#tableAddRowBtn:hover{border-color:var(--accent);}
+#tableAddRowBtn.hidden{display:none;}
+
+/* v2.209: the cell menu's card rules retired with the menu;
+   its rows and sub panels (the class rules below) live in
+   #tableMenu now, whose own block carries the card look. */
 /* Menu rows that carry a current value on the right (the sort and
    filter states, the align and width values). */
 .att-menu-item.cell-flex{
@@ -6050,7 +6076,6 @@ body.dark .share-suggestions:hover::-webkit-scrollbar-thumb{
   .tag-picker-row,.mention-row,.paste-row{min-height:44px;}
   .link-bar-btn{width:36px;height:36px;}
   #conflictReloadBtn{min-height:36px;padding:6px 12px;}
-  #cellMenuBtn{width:36px;height:32px;}
   #tableMenuBtn{min-height:36px;padding:6px 12px;}
   .ss-att-menu-btn,.ss-card-menu-btn{min-width:40px;height:32px;}
   .nb-drop-row{min-height:44px;}
@@ -6085,7 +6110,7 @@ body.dark .share-suggestions:hover::-webkit-scrollbar-thumb{
   #toastBox{bottom:calc(68px + env(safe-area-inset-bottom));}
   #toastBoxTop{top:calc(60px + env(safe-area-inset-top));}
   #savePill{bottom:calc(68px + env(safe-area-inset-bottom));}
-  #attMenu,#attCardMenu,#attAlignMenu,#tableMenu,#cellMenu,
+  #attMenu,#attCardMenu,#attAlignMenu,#tableMenu,
   #linkViewMenu,#attReplaceMenu{max-width:calc(100vw - 16px);}
   .att-menu-item{white-space:normal;overflow-wrap:anywhere;}
   #linkBarView{flex-wrap:wrap;}

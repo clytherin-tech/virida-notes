@@ -104,7 +104,7 @@
 
 "use strict";
 
-const CACHE_NAME = "snakescale-shell-2026-11-22-SSN-V22080";
+const CACHE_NAME = "snakescale-shell-2026-11-23-SSN-V22090";
 
 /* The shell, as paths relative to this worker's scope (the site
    root). "./" and "./index.html" are both listed: the first is the
@@ -150,9 +150,9 @@ const PAGE_KEY = "./index.html";
    build if this block is stale. Never edit it by hand. */
 // BEGIN GENERATED ASSET HASHES (gen_asset_hashes.py)
 const ASSET_HASHES = {
-  "./index.html": "7cffb60e4166a03bc40e3d2a6706ddb211f402172281635be75857c55eecb547",
-  "./styles.css": "63c982b55e8d2f1052629f30fc3704017d0c14a284bb0f1fbcb2def1f69eaaea",
-  "./version.js": "cc60fc74646ff668a8067e7fe0b6fdf2dc1c740e4fdccd2b55545fb0b7219b89",
+  "./index.html": "2d9ab0472e6610c711f5156a7b80cbc6a56b356b164f84d4d4bbb6ba9b4d6ada",
+  "./styles.css": "dd8dab9a09d3d0c084add13f3e5e74571c898cd3df85f6d5f0ab60f882000781",
+  "./version.js": "67e4a2180123b43641b290966c4e7c7155dcf12625364693427f11b4e01ff6c3",
   "./core.js": "36eaa0b66706f4760d3eab96f8e4794c92e1a39796bd1b39eeb6dec50692801f",
   "./store.js": "74852453ec62164e9b24d3f7a2e8f816c530a2fc2bbece6059f92d9533ee76bd",
   "./sync.js": "92a6f98744dc6a89165431978994d0dbcb770506bcec455cb6957dc9a7692276",
@@ -162,8 +162,8 @@ const ASSET_HASHES = {
   "./calendar.js": "1d8926b971eecfa2a7cfd0e285272ad26bc8ff95a88138878f3dff1c078c79b4",
   "./mail.js": "dd5559bd86e5d3226b5aa8bed1e9b99bc14426f54a850a8eb6fa8ed4145d0448",
   "./render.js": "2412202a1c2d022442095c17aaac57193604a1c14cd48dd5ea167799267273e3",
-  "./editor.js": "7d7c37141db0d91971fedd204bdf1b46ede2a0b096420375763aa7aec04ea986",
-  "./editor-tools.js": "7f72275e6742c1da18303c812aa53cea90db02343f545071be08c48642c038ff",
+  "./editor.js": "7adb1fda6c19b9c778d288fa542d81b3a34a100c510d36a555ac96142a8cd2bb",
+  "./editor-tools.js": "cb0ddb99812f2cd2855aca226bf134362b3d594c90efd5f52a9dd13212554dfd",
   "./media.js": "ede5e081b9e2a7eaefc30426010ac10569a8d14686108fadb7d852d7cec897de",
   "./app.js": "9e904a5b1ac7225e6764846fd61f5588e8b7d5c47bcb1644abd1e262144a199d",
   "./manifest.webmanifest": "c4bb2054518b8763407f0834ba9033f690677674c003d9f4eeb4b0286cad9a94",
