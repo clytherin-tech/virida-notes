@@ -3270,16 +3270,21 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
   color:var(--surface);}
 .ss-tsel-seg[data-kind="col"]{border-radius:4px 4px 0 0;}
 .ss-tsel-seg[data-kind="row"]{border-radius:4px 0 0 4px;}
-#tableAddRowBtn{
-  position:fixed;z-index:59;
+.ss-tsel-add{
+  position:fixed;z-index:59;box-sizing:border-box;
   display:inline-flex;align-items:center;gap:5px;
   padding:4px 10px;border-radius:999px;
   background:var(--surface);border:1px solid var(--border);
   box-shadow:0 6px 18px rgba(6,32,22,.20);
   color:var(--primary);font-size:12.5px;font-weight:600;cursor:pointer;
+  user-select:none;-webkit-user-select:none;
 }
-#tableAddRowBtn:hover{border-color:var(--accent);}
-#tableAddRowBtn.hidden{display:none;}
+.ss-tsel-add:hover{border-color:var(--accent);}
+.ss-tsel-line{
+  position:fixed;z-index:60;pointer-events:none;
+  background:var(--accent);border-radius:2px;
+}
+.ss-tsel-line.hidden{display:none;}
 
 /* v2.209: the cell menu's card rules retired with the menu;
    its rows and sub panels (the class rules below) live in

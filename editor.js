@@ -930,6 +930,11 @@ function editorHistoryRestore(snap) {
   h.justRestored = true;
   h.restoredStamp = h.inputStamp;
   markDirty();
+  /* v2.210: the restored body is the note's canonical
+     bytes, which carry no runtime dress: stand the table
+     chrome (gridlines and strips) back up on it at once,
+     rather than at the next pointer or caret event. */
+  refreshTableChrome();
 }
 
 function editorHistoryUndo() {
@@ -5205,7 +5210,6 @@ function openTableMenu() {
     ? range.slice() : [tableMenuCell];
   syncTableMenuGuards();
   syncCellMenuState();
-  hideTableSelectStrips();
   const menu = document.getElementById("tableMenu");
   const btn = document.getElementById("tableMenuBtn");
   menu.classList.remove("hidden");
@@ -5732,12 +5736,18 @@ function setCellAnchor(cell) {
   paintCellSelection();
 }
 
-/* ----- v2.209: edit-mode gridlines and selector strips ----- */
+/* ----- v2.209: edit-mode gridlines and selector strips -----
+   v2.210: the gridlines and the strips stand on every table
+   in the editor at all times (Chris's field call after
+   v2.209: hover-driven furniture tore down mid-press and
+   read as a deselect), so the state below is per table, not
+   one tracked table. */
 
-/* The table currently wearing the edit-mode gridlines, and the
-   signature its per-cell marks were computed from. */
-let gridlineTable = null;
-let gridlineSig = "";
+/* The per-table gridline signatures (table -> the
+   fingerprint its per-cell marks were computed from), so a
+   table's marks recompute only when its own shape or cell
+   styles change. */
+const gridlineSigs = new WeakMap();
 
 /* A cheap fingerprint of a table's shape and cell styles, so
    the borderless-cell marks recompute only when something
@@ -5762,21 +5772,10 @@ function tableGridlineSig(table) {
    saved mid-edit carries neither, and the note's own borders
    are never touched. */
 function applyTableGridlines(table) {
-  if (gridlineTable && gridlineTable !== table) {
-    gridlineTable.classList.remove("ss-gridlines");
-    gridlineTable.querySelectorAll(".ss-gridline-cell")
-      .forEach(function (el) {
-        el.classList.remove("ss-gridline-cell");
-        if (!el.classList.length) { el.removeAttribute("class"); }
-      });
-    gridlineTable = null;
-    gridlineSig = "";
-  }
   if (!table) { return; }
   const sig = tableGridlineSig(table);
-  if (gridlineTable === table && gridlineSig === sig) { return; }
-  gridlineTable = table;
-  gridlineSig = sig;
+  if (gridlineSigs.get(table) === sig) { return; }
+  gridlineSigs.set(table, sig);
   table.classList.add("ss-gridlines");
   Array.prototype.forEach.call(table.querySelectorAll("th, td"),
     function (cell) {
@@ -5796,112 +5795,326 @@ function applyTableGridlines(table) {
     });
 }
 
-/* Selector strip state: the table the strips serve and the
-   signature they were built from (columns / rows, the same
-   signature the resize furniture uses). */
-let tableStripTable = null;
-let tableStripSig = "";
-
-/* Forget the strips and the Add row bar entirely. */
-function hideTableSelectStrips() {
-  tableStripTable = null;
-  tableStripSig = "";
-  const layer = document.getElementById("tableSelectStrips");
-  if (layer) { layer.innerHTML = ""; }
-  const addBtn = document.getElementById("tableAddRowBtn");
-  if (addBtn) { addBtn.classList.add("hidden"); }
+/* Stand the edit-mode gridlines on every table in the body
+   (v2.210: always, not only on the table the pointer or the
+   caret is visiting). */
+function refreshTableGridlines() {
+  const bodyEl = document.getElementById("noteBody");
+  if (!bodyEl) { return; }
+  Array.prototype.forEach.call(bodyEl.querySelectorAll("table"),
+    function (table) { applyTableGridlines(table); });
 }
 
-/* Build the strip segments for one table: one segment per
-   column parked above the table (a click selects the column)
-   and one per visible row parked at its left (a click selects
-   the row; body rows carry their number, the way the preview
-   Chris approved showed them). Zero height rows (a filter
-   hides them) get no segment: they have no row on screen to
-   select. */
-function buildTableSelectStrips(table) {
+/* The table chrome refresh (v2.210): the gridlines on every
+   table in the body, and the selector strips wherever the
+   editable state allows them. Called from the furniture
+   watcher, from the body's structure observer, and after
+   operations that replace table elements wholesale. Mid
+   reorder drag the strips stand as they are. */
+function refreshTableChrome() {
+  refreshTableGridlines();
+  if (stripDrag && stripDrag.active) { return; }
+  updateTableSelectStrips();
+}
+
+/* Selector strip state (v2.210): the strips stand on every
+   table in the editor at all times while the note is
+   editable, so the state is one body-level signature (every
+   table's shape, in body order) plus the segments standing
+   in the layer, each carrying its own spec. A rebuild
+   happens only when that signature changes; positioning
+   runs on every refresh from live geometry. */
+let stripSig = "";
+let stripDrag = null;
+/* The element whose press already acted, whose own click
+   is therefore spent when it arrives. Element-scoped: a
+   press that ends off the layer never delivers its click
+   here, and must not swallow the next element's click. */
+let stripSuppressEl = null;
+
+/* Spreadsheet letters for a column index: A, B, ..., Z, AA. */
+function columnLetters(idx) {
+  let s = "";
+  let n = idx + 1;
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+/* Forget the strips entirely (the editor locked, or no note
+   is open). The gridlines are not furniture: they stay. */
+function hideTableSelectStrips() {
+  stripSig = "";
   const layer = document.getElementById("tableSelectStrips");
-  if (!layer) { return; }
+  if (layer) { layer.innerHTML = ""; }
+}
+
+/* Build the strip segments for every table in the body: one
+   segment per column parked above the table, labeled with
+   its spreadsheet letter (a press selects the column, a
+   drag reorders it), one per visible row parked at its
+   left, labeled with its body row number (a press selects
+   the row, a drag reorders it), and an Add row bar under
+   each table. Zero height rows (a filter hides them) get
+   no segment: they have no row on screen to select. */
+function buildAllTableStrips() {
+  const layer = document.getElementById("tableSelectStrips");
+  const bodyEl = document.getElementById("noteBody");
+  if (!layer || !bodyEl) { return; }
   layer.innerHTML = "";
-  function addSeg(kind, spec, label) {
+  function addSeg(table, kind, spec, label, cls) {
     const el = document.createElement("div");
-    el.className = "ss-tsel-seg";
+    el.className = cls || "ss-tsel-seg";
     el.setAttribute("data-kind", kind);
     spec.kind = kind;
     spec.table = table;
     el._ssStripSpec = spec;
     if (label) { el.textContent = label; }
     layer.appendChild(el);
+    return el;
   }
-  const cols = tableResizeGridColumns(table);
-  for (let c = 0; c < cols; c++) { addSeg("col", { index: c }, ""); }
-  let bodyNo = 0;
-  Array.prototype.forEach.call(table.rows, function (row) {
-    const inHeader = row.parentElement &&
-      row.parentElement.tagName === "THEAD";
-    if (!inHeader) { bodyNo++; }
-    if (row.getBoundingClientRect().height > 0) {
-      addSeg("row", { rowEl: row }, inHeader ? "" : String(bodyNo));
-    }
-  });
+  Array.prototype.forEach.call(bodyEl.querySelectorAll("table"),
+    function (table) {
+      const cols = tableResizeGridColumns(table);
+      for (let c = 0; c < cols; c++) {
+        addSeg(table, "col", { index: c }, columnLetters(c));
+      }
+      let bodyNo = 0;
+      Array.prototype.forEach.call(table.rows, function (row) {
+        const inHeader = row.parentElement &&
+          row.parentElement.tagName === "THEAD";
+        if (!inHeader) { bodyNo++; }
+        if (row.getBoundingClientRect().height > 0) {
+          addSeg(table, "row", { rowEl: row },
+            inHeader ? "" : String(bodyNo));
+        }
+      });
+      addSeg(table, "add", {}, "+ Add row", "ss-tsel-add");
+    });
+  /* The reorder indicator line rides in the same layer,
+     hidden until a strip drag is under way. */
+  const line = document.createElement("div");
+  line.className = "ss-tsel-line hidden";
+  line.id = "tableReorderLine";
+  layer.appendChild(line);
 }
 
-/* (Re)park the segments and the Add row bar on the served
-   table from its live geometry. */
-function positionTableSelectStrips() {
-  const table = tableStripTable;
+/* A fingerprint of every table's shape in body order: the
+   strips rebuild when it changes and only then. */
+function tableStripsSignature() {
+  const bodyEl = document.getElementById("noteBody");
+  if (!bodyEl) { return ""; }
+  const parts = [];
+  Array.prototype.forEach.call(bodyEl.querySelectorAll("table"),
+    function (table) {
+      parts.push(tableResizeGridColumns(table) + "/" +
+        table.rows.length);
+    });
+  return parts.join("|");
+}
+
+/* (Re)park every segment and Add row bar from live
+   geometry. */
+function positionAllTableStrips() {
   const layer = document.getElementById("tableSelectStrips");
-  const addBtn = document.getElementById("tableAddRowBtn");
-  if (!table || !layer) { return; }
-  if (!table.isConnected) { hideTableSelectStrips(); return; }
-  const rect = table.getBoundingClientRect();
-  if (!rect.width || !rect.height) { return; }
-  const cols = tableResizeGridColumns(table);
-  const bounds = cols ? tableResizeColumnBounds(table, cols) : null;
+  if (!layer) { return; }
+  const boundsCache = new Map();
+  function boundsFor(table) {
+    if (!boundsCache.has(table)) {
+      const cols = tableResizeGridColumns(table);
+      boundsCache.set(table, cols ?
+        tableResizeColumnBounds(table, cols) : null);
+    }
+    return boundsCache.get(table);
+  }
   Array.prototype.forEach.call(layer.children, function (el) {
     const spec = el._ssStripSpec;
-    if (!spec) { return; }
-    if (spec.kind === "col" && bounds) {
+    if (!spec || !spec.table) { return; }
+    const table = spec.table;
+    if (!table.isConnected) { return; }
+    const rect = table.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      el.style.display = "none";
+      return;
+    }
+    el.style.display = "";
+    if (spec.kind === "col") {
+      const bounds = boundsFor(table);
+      if (!bounds) { el.style.display = "none"; return; }
       el.style.left = bounds[spec.index] + "px";
-      el.style.top = Math.max(0, rect.top - 17) + "px";
+      el.style.top = Math.max(0, rect.top - 19) + "px";
       el.style.width = Math.max(14,
         bounds[spec.index + 1] - bounds[spec.index] - 2) + "px";
-      el.style.height = "15px";
+      el.style.height = "17px";
     } else if (spec.kind === "row" && spec.rowEl) {
       const r = spec.rowEl.getBoundingClientRect();
-      el.style.left = Math.max(0, rect.left - 24) + "px";
+      el.style.left = Math.max(0, rect.left - 26) + "px";
       el.style.top = r.top + "px";
-      el.style.width = "22px";
+      el.style.width = "24px";
       el.style.height = Math.max(14, r.height - 2) + "px";
+    } else if (spec.kind === "add") {
+      el.style.left = rect.left + "px";
+      el.style.top = (rect.bottom + 6) + "px";
     }
   });
-  if (addBtn) {
-    addBtn.classList.remove("hidden");
-    addBtn.style.left = rect.left + "px";
-    addBtn.style.top = (rect.bottom + 6) + "px";
-  }
 }
 
-/* The strips watcher: serve the tracked table (the same table
-   the filter chip serves) while the note is editable and no
-   menu is open, and nothing in every other case. */
+/* The strips watcher (v2.210): stand the strips on every
+   table while the note is editable; stand them down when
+   it is not. Unlike the v2.209 watcher this never follows
+   the hover or the caret: the strips are part of the
+   editor's standing dress, so traveling toward one can
+   never tear it down. */
 function updateTableSelectStrips() {
   const layer = document.getElementById("tableSelectStrips");
   if (!layer) { return; }
-  const menu = document.getElementById("tableMenu");
-  if (!cellMenuTable || !cellEditorEditable() ||
-      (menu && !menu.classList.contains("hidden"))) {
-    hideTableSelectStrips();
-    return;
+  if (!cellEditorEditable()) { hideTableSelectStrips(); return; }
+  const sig = tableStripsSignature();
+  if (sig !== stripSig) {
+    stripSig = sig;
+    buildAllTableStrips();
   }
-  const table = cellMenuTable;
-  const sig = tableResizeGridColumns(table) + "/" + table.rows.length;
-  if (table !== tableStripTable || sig !== tableStripSig) {
-    tableStripTable = table;
-    tableStripSig = sig;
-    buildTableSelectStrips(table);
+  positionAllTableStrips();
+}
+
+/* The insertion boundary nearest a pointer coordinate among
+   the given boundary positions (viewport coordinates). */
+function nearestBoundary(bounds, pos) {
+  let best = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < bounds.length; i++) {
+    const d = Math.abs(bounds[i] - pos);
+    if (d < bestDist) { bestDist = d; best = i; }
   }
-  positionTableSelectStrips();
+  return best;
+}
+
+/* The boundaries a strip drag travels among, from live
+   geometry. For a column drag: the table's column
+   boundaries. For a row drag: the boundaries of the dragged
+   row's own section (header rows reorder among header rows,
+   body rows among body rows). Null when the drag cannot be
+   judged (no geometry). */
+function stripDragFrame(drag) {
+  const table = drag.table;
+  const rect = table.getBoundingClientRect();
+  if (!rect.width || !rect.height) { return null; }
+  if (drag.kind === "col") {
+    const cols = tableResizeGridColumns(table);
+    const bounds = tableResizeColumnBounds(table, cols);
+    if (!bounds) { return null; }
+    return { bounds: bounds, rect: rect };
+  }
+  const section = drag.rowEl.parentElement;
+  const rows = Array.prototype.slice.call(section.rows);
+  const bounds = rows.map(function (r) {
+    return r.getBoundingClientRect().top;
+  });
+  bounds.push(rows.length ?
+    rows[rows.length - 1].getBoundingClientRect().bottom :
+    rect.bottom);
+  return { bounds: bounds, rect: rect, rows: rows };
+}
+
+/* Show or move the reorder indicator for a boundary. */
+function showStripDragLine(drag, frame, boundary) {
+  const line = document.getElementById("tableReorderLine");
+  if (!line) { return; }
+  line.classList.remove("hidden");
+  if (drag.kind === "col") {
+    line.style.left = (frame.bounds[boundary] - 1) + "px";
+    line.style.top = frame.rect.top + "px";
+    line.style.width = "3px";
+    line.style.height = frame.rect.height + "px";
+  } else {
+    line.style.left = frame.rect.left + "px";
+    line.style.top = (frame.bounds[boundary] - 1) + "px";
+    line.style.width = frame.rect.width + "px";
+    line.style.height = "3px";
+  }
+}
+
+function hideStripDragLine() {
+  const line = document.getElementById("tableReorderLine");
+  if (line) { line.classList.add("hidden"); }
+}
+
+/* Move a column: every row's cell at `from` lands at the
+   insertion index (counted before the move), the colgroup's
+   col follows, and the sort and filter column references
+   remap so they keep pointing at their own columns. One
+   history step, like a resize drag. */
+function moveTableColumn(table, from, insert) {
+  const cols = tableResizeGridColumns(table);
+  if (from < 0 || from >= cols || insert < 0 || insert > cols ||
+      insert === from || insert === from + 1) { return false; }
+  const to = insert > from ? insert - 1 : insert;
+  editorHistorySuspend();
+  Array.prototype.forEach.call(table.rows, function (row) {
+    const cell = row.cells[from];
+    if (!cell) { return; }
+    const ref = row.cells[to];
+    if (!ref) { return; }
+    if (from < to) { row.insertBefore(cell, ref.nextSibling); }
+    else { row.insertBefore(cell, ref); }
+  });
+  const group = table.querySelector("colgroup");
+  if (group && group.children[from]) {
+    const colEl = group.children[from];
+    const ref = group.children[to];
+    if (ref) {
+      if (from < to) {
+        group.insertBefore(colEl, ref.nextSibling);
+      } else { group.insertBefore(colEl, ref); }
+    }
+  }
+  const remap = function (idx) {
+    if (idx === from) { return to; }
+    if (from < to && idx > from && idx <= to) { return idx - 1; }
+    if (to < from && idx >= to && idx < from) { return idx + 1; }
+    return idx;
+  };
+  const sort = tableSortState(table);
+  if (sort) {
+    table.setAttribute("data-ss-sort",
+      remap(sort.col) + ":" + sort.dir);
+  }
+  const filters = tableFilters(table);
+  const keys = Object.keys(filters);
+  if (keys.length) {
+    const next = {};
+    keys.forEach(function (k) {
+      next[String(remap(parseInt(k, 10)))] = filters[k];
+    });
+    setTableFilters(table, next);
+  }
+  editorHistoryResume(true);
+  markDirty();
+  return true;
+}
+
+/* Move a row within its own section (header rows among
+   header rows, body rows among body rows): insert counts
+   the section's boundaries before the move. One history
+   step. */
+function moveTableRow(rowEl, insert) {
+  const section = rowEl.parentElement;
+  if (!section) { return false; }
+  const rows = Array.prototype.slice.call(section.rows);
+  const from = rows.indexOf(rowEl);
+  if (from < 0 || insert < 0 || insert > rows.length ||
+      insert === from || insert === from + 1) { return false; }
+  const to = insert > from ? insert - 1 : insert;
+  editorHistorySuspend();
+  const ref = rows[to];
+  if (from < to) { section.insertBefore(rowEl, ref.nextSibling); }
+  else { section.insertBefore(rowEl, ref); }
+  editorHistoryResume(true);
+  markDirty();
+  return true;
 }
 
 /* Select a whole column or row as the multi-cell range: the
@@ -5999,8 +6212,7 @@ function updateCellMenu() {
   cellMenuTable = cell.closest("table");
   if (!cellMenuTable) { hideCellMenu(); return; }
   updateFilterChip();
-  applyTableGridlines(cellMenuTable);
-  updateTableSelectStrips();
+  refreshTableChrome();
 }
 
 /* Close the menu popup. v2.209: the cell section lives in
@@ -6021,10 +6233,13 @@ function hideCellMenu() {
   cellHoverCell = null;
   const chip = document.getElementById("tableFilterChip");
   if (chip) { chip.classList.add("hidden"); }
-  /* v2.209: the gridlines and the selector strips follow
-     the same hides. */
-  applyTableGridlines(null);
-  hideTableSelectStrips();
+  /* v2.210: the gridlines and the selector strips no
+     longer follow the tracked cell's hides: they stand on
+     every table while the note is open. The refresh stands
+     the strips down only when the editor is not editable,
+     which is the state that reaches here on a lock or a
+     note switch. */
+  refreshTableChrome();
   /* v2.92.0: the resize furniture follows the same hides
      (note switches and editor locks land here). */
   hideTableResizeFurniture();
@@ -6450,7 +6665,7 @@ function wireCellMenu() {
        table furniture too: resting on them is not leaving
        the table. */
     if (target.closest("#tableSelectStrips") ||
-        target.closest("#tableAddRowBtn")) { return; }
+        target.closest(".ss-tsel-add")) { return; }
     /* v2.92.0: the resize furniture is table furniture
        too: resting on a strip or the handle is not
        leaving the table, so the hover cell stands (and
@@ -6561,19 +6776,24 @@ function wireCellMenu() {
     cellDragState = null;
   });
 
-  /* v2.209: the selector strips and the Add row bar. A
-     segment press is prevented, so it never starts a text
-     selection or moves the caret; the click then selects the
-     whole column or row as the range. */
+  /* v2.210: the selector strips and the Add row bars. A
+     segment press selects at once (the press itself, not
+     the click that follows it: in v2.209 a click judged
+     after the press let mid-press watcher changes swallow
+     the selection), and a press that travels starts a
+     reorder drag of the whole column or row. The click
+     that follows a press on the same element is spent
+     (the press already acted); a click with no press of
+     its own (a synthetic one) still selects and adds,
+     the way it did before. */
   const stripLayer = document.getElementById("tableSelectStrips");
-  stripLayer.addEventListener("mousedown", function (ev) {
-    ev.preventDefault();
-  });
-  stripLayer.addEventListener("click", function (ev) {
+  function stripSpecOf(ev) {
     const el = ev.target && ev.target.closest ?
-      ev.target.closest(".ss-tsel-seg") : null;
-    if (!el || !el._ssStripSpec) { return; }
-    const spec = el._ssStripSpec;
+      ev.target.closest(".ss-tsel-seg, .ss-tsel-add") : null;
+    return el && el._ssStripSpec ?
+      { el: el, spec: el._ssStripSpec } : null;
+  }
+  function selectStripSlice(spec) {
     const table = spec.table;
     if (!table || !table.isConnected) { return; }
     if (spec.kind === "col") {
@@ -6586,11 +6806,101 @@ function wireCellMenu() {
       selectTableSlice(spec.rowEl.cells[0],
         spec.rowEl.cells[spec.rowEl.cells.length - 1]);
     }
+  }
+  stripLayer.addEventListener("pointerdown", function (ev) {
+    const hit = stripSpecOf(ev);
+    if (!hit) { return; }
+    ev.preventDefault();
+    stripSuppressEl = hit.el;
+    const spec = hit.spec;
+    if (!spec.table || !spec.table.isConnected) { return; }
+    if (spec.kind === "add") { return; }
+    selectStripSlice(spec);
+    if (spec.kind === "col") {
+      stripDrag = { kind: "col", table: spec.table,
+        from: spec.index, x0: ev.clientX, y0: ev.clientY,
+        active: false, insert: spec.index };
+    } else if (spec.kind === "row") {
+      stripDrag = { kind: "row", table: spec.table,
+        rowEl: spec.rowEl, x0: ev.clientX, y0: ev.clientY,
+        active: false, insert: -1 };
+    }
   });
-  document.getElementById("tableAddRowBtn").addEventListener(
-    "click", function () {
-      if (tableStripTable) { addRowToTableEnd(tableStripTable); }
-    });
+  stripLayer.addEventListener("mousedown", function (ev) {
+    ev.preventDefault();
+  });
+  document.addEventListener("pointermove", function (ev) {
+    if (!stripDrag) { return; }
+    if (!stripDrag.active) {
+      if (Math.abs(ev.clientX - stripDrag.x0) +
+          Math.abs(ev.clientY - stripDrag.y0) < 6) { return; }
+      stripDrag.active = true;
+      closeTableMenu();
+    }
+    const frame = stripDragFrame(stripDrag);
+    if (!frame) { return; }
+    const pos = stripDrag.kind === "col" ? ev.clientX :
+      ev.clientY;
+    stripDrag.insert = nearestBoundary(frame.bounds, pos);
+    showStripDragLine(stripDrag, frame, stripDrag.insert);
+  });
+  document.addEventListener("pointerup", function () {
+    if (!stripDrag) { return; }
+    const drag = stripDrag;
+    stripDrag = null;
+    hideStripDragLine();
+    if (!drag.active) { return; }
+    if (drag.kind === "col") {
+      if (moveTableColumn(drag.table, drag.from, drag.insert)) {
+        selectStripSlice({ kind: "col", table: drag.table,
+          index: drag.insert > drag.from ? drag.insert - 1 :
+            drag.insert });
+      }
+    } else if (drag.kind === "row" && drag.insert >= 0) {
+      if (moveTableRow(drag.rowEl, drag.insert)) {
+        selectStripSlice({ kind: "row", table: drag.table,
+          rowEl: drag.rowEl });
+      }
+    }
+    refreshTableChrome();
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && stripDrag) {
+      stripDrag = null;
+      hideStripDragLine();
+    }
+  });
+  stripLayer.addEventListener("click", function (ev) {
+    const hit = stripSpecOf(ev);
+    if (hit && stripSuppressEl === hit.el) {
+      stripSuppressEl = null;
+      return;
+    }
+    stripSuppressEl = null;
+    if (!hit) { return; }
+    const spec = hit.spec;
+    if (!spec.table || !spec.table.isConnected) { return; }
+    if (spec.kind === "add") {
+      addRowToTableEnd(spec.table);
+      return;
+    }
+    selectStripSlice(spec);
+  });
+
+  /* v2.210: the table chrome follows the body's structure:
+     a note opening, a paste, an undo, or a menu operation
+     that adds, removes, or replaces a table refreshes the
+     gridlines and the strips without waiting for the
+     pointer. Only structure is observed, and the refresh
+     writes classes and layer children only, never body
+     structure, so the observer cannot feed itself. */
+  if (bodyEl && window.MutationObserver) {
+    new MutationObserver(function () { refreshTableChrome(); })
+      .observe(bodyEl, { childList: true, subtree: true });
+  }
+  window.addEventListener("resize", function () {
+    updateTableSelectStrips();
+  });
 
   /* The chip clears every filter on its table at once. */
   document.getElementById("tableFilterChip").addEventListener("click",
@@ -6670,7 +6980,7 @@ function wireCellMenu() {
         target.closest("#tableMenuBtn") ||
         target.closest("#tableFilterChip") ||
         target.closest("#tableSelectStrips") ||
-        target.closest("#tableAddRowBtn")) { return; }
+        target.closest(".ss-tsel-add")) { return; }
     /* v2.209: the toolbar is exempt from the selection
        clearing too: its commands now act on the range, and
        a press must leave the range standing for the next
@@ -7181,13 +7491,6 @@ function startTableResizeDrag(ev, spec) {
   closeTableMenu();
   closeCellMenu();
   clearCellSelection();
-  /* v2.209: the edit-mode gridlines and selector strips
-     stand down for the drag too, before the snapshot
-     below is taken, so the snapshot (and anything it
-     restores) is the table's own bytes, never furniture
-     paint; the watchers repaint both when the drag ends. */
-  applyTableGridlines(null);
-  hideTableSelectStrips();
   const bodyEl = document.getElementById("noteBody");
   const tables = Array.prototype.slice.call(
     bodyEl.querySelectorAll("table"));
