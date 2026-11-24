@@ -731,12 +731,24 @@ function sanitizeImdbFetched(parsed) {
        by the same strict shape as the file's (the
        v2.184 block in sanitizeImdbPreviews): the
        main actors as a list of names, the director
-       as one name, anything else dropped. */
-    if (Array.isArray(raw.actors)) {
+       as one name, anything else dropped.
+       v2.219: the actors stand only beside the
+       record's billing backed mark (actorsOrd):
+       Chris's Starring rule judges the cache as it
+       judges a fresh fetch, and a record written
+       before the mark existed, whose actors carry
+       no sign of their backing, loses them here
+       rather than resurrecting the old first seen
+       three under the new rule. */
+    if (Array.isArray(raw.actors) &&
+        raw.actorsOrd === true) {
       const names = raw.actors.filter(function (n) {
         return typeof n === "string" && !!n.trim();
       }).map(function (n) { return n.trim(); });
-      if (names.length) { rec.actors = names; }
+      if (names.length) {
+        rec.actors = names;
+        rec.actorsOrd = true;
+      }
     }
     if (typeof raw.director === "string" &&
         !!raw.director.trim()) {
@@ -778,8 +790,12 @@ function imdbFetchedHit(ttId) {
   return { title: rec.title || "",
     posterUrl: rec.posterUrl || "",
     description: rec.description || "",
-    actors: (rec.actors && rec.actors.length)
-      ? rec.actors.slice() : null,
+    /* v2.219: cached actors pass only beside their
+       billing backed mark, so no record however it
+       reached the map can stand a Starring line
+       the rule would not stand from a fresh fetch. */
+    actors: (rec.actorsOrd === true && rec.actors &&
+      rec.actors.length) ? rec.actors.slice() : null,
     director: rec.director || "",
     trailer: rec.trailer || "" };
 }
@@ -849,7 +865,19 @@ const imdbFetchFlights = Object.create(null);
    ordinal (P1545) where the record gives one
    and in the answer's own order where it does
    not, a member the label service cannot name
-   in English never standing as a name. */
+   in English never standing as a name.
+   v2.219: Chris's Starring rule retires the
+   answer's own order half of that: only billing
+   order stands. The cast that stands is the
+   ordinal holders alone, in billing order, and
+   a record with no ordinal holders carries no
+   actors at all, so no Starring line stands
+   from the fetch; the directors, the trailer,
+   the poster, and the description are judged
+   exactly as in v2.217. The cache record marks
+   its actors as billing backed beside them, and
+   the parse and the hit read stand cached
+   actors only beside that mark. */
 function fetchImdbReference(ttId) {
   if (!ttId) { return Promise.resolve(null); }
   if (imdbFetchFlights[ttId]) {
@@ -934,21 +962,28 @@ function fetchImdbReference(ttId) {
           castList.push(rec);
         }
       }
-      /* Billing order where the record gives one:
-         the ordinal holders first, in ordinal order;
-         the rest in the answer's own order, which
-         is all the record offers for them. The
+      /* v2.219: Chris's Starring rule: only billing
+         order stands. The cast that stands is the
+         ordinal holders alone, in billing order,
+         ties in the answer's own order: a member
+         whose statement carries no ordinal never
+         stands from a fetch, however early the
+         answer names him, and a record with no
+         ordinal holders at all carries no actors,
+         so no Starring line stands for it. (The
+         v2.217 first seen fallback stood three real
+         but arbitrary names for such a record:
+         Forrest Gump's 119 ordinal-less statements
+         stood three names ahead of its star.) The
          standing count is the file's: three
          principal names. */
-      castList.sort(function (a, b) {
-        const ao = a.ord !== null, bo = b.ord !== null;
-        if (ao && bo) { return (a.ord - b.ord) ||
-          (a.at - b.at); }
-        if (ao) { return -1; }
-        if (bo) { return 1; }
-        return a.at - b.at;
+      const billedList = castList.filter(function (r) {
+        return r.ord !== null;
       });
-      const actorNames = castList.slice(0, 3)
+      billedList.sort(function (a, b) {
+        return (a.ord - b.ord) || (a.at - b.at);
+      });
+      const actorNames = billedList.slice(0, 3)
         .map(function (r) { return r.name; });
       const directorJoined = directorNames.join(", ");
       if (!slug) {
@@ -1002,7 +1037,15 @@ function fetchImdbReference(ttId) {
         posterUrl: entry.posterUrl,
         description: entry.description, at: Date.now() };
       if (entry.trailer) { hitRec.trailer = entry.trailer; }
-      if (entry.actors) { hitRec.actors = entry.actors; }
+      if (entry.actors) {
+        hitRec.actors = entry.actors;
+        /* v2.219: the mark that these cached actors
+           were billing order backed; the parse and
+           the hit read stand cached actors only
+           beside it. A fetch's actors are backed by
+           construction: only ordinal holders stand. */
+        hitRec.actorsOrd = true;
+      }
       if (entry.director) { hitRec.director = entry.director; }
       imdbFetchedById[ttId] = hitRec;
       saveImdbFetchedDeviceCache();
