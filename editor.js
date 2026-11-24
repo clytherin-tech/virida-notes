@@ -1907,6 +1907,12 @@ function saveLinkEdit() {
    and round trips through collectEditor untouched. Everything
    the modes SHOW is runtime only (see the faces block below). */
 
+/* v2.213: the button that summoned the View Link As menu
+   (the link bar's three dot button, or the Mention card's),
+   recorded by openLinkViewMenu and read by
+   positionLinkViewMenu; null while the menu is closed. */
+let linkViewMenuAnchorBtn = null;
+
 function openLinkViewMenu() {
   const menu = document.getElementById("linkViewMenu");
   const btn = document.getElementById("linkBarMenuBtn");
@@ -1925,23 +1931,38 @@ function openLinkViewMenu() {
   if (btn) { btn.setAttribute("aria-expanded", "true"); }
   const cardBtn = document.getElementById("noteLinkCardMenuBtn");
   if (cardBtn) { cardBtn.setAttribute("aria-expanded", "true"); }
+  /* v2.213: record the button that summoned the menu: the
+     card's three dot button when the Mention card is the
+     visible surface, the bar's button otherwise. The menu
+     hangs from that button (see positionLinkViewMenu), and
+     the recording stands until the menu closes. */
+  const card = document.getElementById("noteLinkCard");
+  linkViewMenuAnchorBtn =
+    (card && !card.classList.contains("hidden")) ? cardBtn : btn;
   positionLinkViewMenu();
 }
 
-/* v2.10: place the menu under the surface that summoned it:
-   the bar, or the Mention hover card when the card is the
-   visible surface (the bar is hidden then). The menu is fixed
-   positioned and right aligned to its host, clamped into the
-   viewport, and flips above the host when there is no room
-   below, the same clamping the bar itself uses. */
+/* v2.213: place the menu under the button that summoned
+   it, not under the whole surface carrying the button.
+   Through v2.212 the menu anchored to its host (the
+   Mention card or the link bar), so it opened detached
+   below the whole card, overlapping the content under it,
+   instead of hanging from the three dot button at the
+   surface's top right that was actually pressed (Chris's
+   screenshot, Nov 23, 2026). The anchor is the button
+   recorded at open time; the placement is the audio card
+   menu's shape (showAttCardMenu in media.js): top at the
+   button's bottom plus 6, the right edge aligned to the
+   button's right edge, clamped into the viewport with
+   8px margins, flipping above the button when there is
+   no room below. (v2.10 placed it under the summoning
+   surface; v2.9 placed it under the bar.) */
 function positionLinkViewMenu() {
   const menu = document.getElementById("linkViewMenu");
   if (!menu || menu.classList.contains("hidden")) { return; }
-  const card = document.getElementById("noteLinkCard");
-  const host = (card && !card.classList.contains("hidden")) ?
-    card : document.getElementById("linkBar");
-  if (!host) { return; }
-  const rect = host.getBoundingClientRect();
+  const btn = linkViewMenuAnchorBtn;
+  if (!btn) { return; }
+  const rect = btn.getBoundingClientRect();
   const width = menu.offsetWidth;
   const height = menu.offsetHeight;
   let left = Math.min(rect.right - width,
@@ -1959,6 +1980,7 @@ function closeLinkViewMenu() {
   const menu = document.getElementById("linkViewMenu");
   const btn = document.getElementById("linkBarMenuBtn");
   if (menu) { menu.classList.add("hidden"); }
+  linkViewMenuAnchorBtn = null;
   if (btn) { btn.setAttribute("aria-expanded", "false"); }
   const cardBtn = document.getElementById("noteLinkCardMenuBtn");
   if (cardBtn) { cardBtn.setAttribute("aria-expanded", "false"); }

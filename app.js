@@ -2723,7 +2723,7 @@ function wireEvents() {
     if (noteLinkCardAnchor) { copyNoteLink(noteLinkCardAnchor); }
   });
   /* The card's three dot button opens the same View Link As
-     menu (positioned under the card by openLinkViewMenu). */
+     menu (hung from the button by openLinkViewMenu). */
   document.getElementById("noteLinkCardMenuBtn").addEventListener("click", function () {
     toggleLinkViewMenu();
   });
