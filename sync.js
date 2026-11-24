@@ -713,6 +713,328 @@ function catalogGuardMergedEntries(localEntries, storedEntries) {
   });
 }
 
+/* v2.215: the catalog freshness guard, the general
+   form of the v2.130 conversion guard above. Twice on
+   November 23, 2026, one session's wholesale catalog
+   write silently replaced newer per entry state with
+   older: in the morning a session holding the pre
+   migration catalog wrote it back over the migration,
+   reverting 53 entries (the accident the v2.130 merge
+   answers, and still answers first); in the evening a
+   session whose copy of one note stood as it had been
+   derived at load, from the note file's outdated front
+   matter and with no body behind it, wrote that note's
+   old notebook back over the repaired catalog and
+   emptied its preview, so the note opened empty while
+   its file stood whole. Chris's rule from those
+   incidents: no note may disappear, open empty, or
+   revert because two editors touched it; notes are
+   addressed by id, and his renames and notebook moves
+   always win and persist.
+
+   The guard is a second merge in writeCatalogOnce,
+   run against the same stored read as the first (and
+   re-run against the winner's entries on the conflict
+   retry, exactly as the first merge is). It judges
+   per entry id from three witnesses: the local entry
+   built from this session's state, the stored entry
+   the fresh read holds, and the baseline entry, the
+   catalog this session last read or wrote
+   (lastCatalogEntriesText, parsed back). Two session
+   memories complete it: the load shapes, each entry
+   exactly as the last completed load left it
+   (captureCatalogGuardLoadShapes, called at both
+   load tails beside the arming of the catalog), and
+   the refused shapes, the local forms this guard has
+   already overruled once and keeps overruling while
+   they stand unchanged, because a merge heals the
+   catalog and not the state it was built from.
+
+   The judgments, per id:
+   - An id standing in this device's pending deletes
+     record (pendingDeleteIds, render.js) is never
+     written: a Delete Forever is the app's own word
+     that the entry is gone, and no merge resurrects
+     it, from either side.
+   - An entry only the store holds is carried into
+     the write (it was created elsewhere after this
+     session's baseline), unless the baseline held it
+     and this session's state no longer does: then
+     this session's own flows removed it (a delete, a
+     notebook's deletion, a load that found its file
+     gone) and the drop stands. A carried entry is
+     remembered (catalogGuardAdoptedIds), so the
+     baseline advancing over it on the write cannot
+     later misread its absence from state as a
+     removal of this session's.
+   - An entry only this session holds is written,
+     unless the baseline held it and the store no
+     longer does: it was removed there, and this
+     session's stale copy does not resurrect it.
+   - An entry both hold is contested (see
+     catalogGuardFreshnessContest): a local form
+     equal to its load shape is load derived, not an
+     edit, and cannot overrule the store; a form
+     already refused, standing unchanged, is refused
+     again; when the stored form still equals the
+     baseline the local change is the only move and
+     stands, and when the local form still equals
+     the baseline the store's move stands; when both
+     moved, the fresher entry wins, judged by the
+     entry's own updated stamp, then by whose file
+     token moved away from the baseline's, with a
+     field the winner never moved from baseline
+     (notebook, title, preview) still taking the
+     loser's moved value, so a rename or a move on
+     one side and an edit on the other both survive;
+     and at a full tie of stamp and token, where
+     both forms claim the same file revision, a
+     standing preview is never replaced by an empty
+     one, the no body artifact the evening write
+     carried. A trash is a fresher entry (the trash
+     flow stamps it), so it wins its contest and a
+     guarded write never resurrects a trashed note.
+   The note file agreement rule rides the same
+   discipline: every app flow that writes a note file
+   serializes it from the same note object the
+   catalog entry is built from, and a title or
+   notebook change in any of those flows stamps the
+   note's updated and rewrites its file, so the two
+   stores agree after the write by construction; the
+   one catalog only change (a Doc-backed note's
+   move) is a deliberate in-session change, never a
+   load shape, so the guard lets it stand. */
+let catalogGuardLoadShapes = Object.create(null);
+let catalogGuardRefusedShapes = Object.create(null);
+let catalogGuardAdoptedIds = Object.create(null);
+
+/* One entry in one comparable text: keys sorted, so
+   two builds of the same entry compare equal however
+   their fields were assembled. */
+function catalogGuardEntryText(entry) {
+  if (!entry || typeof entry !== "object") { return ""; }
+  const keys = Object.keys(entry).sort();
+  const parts = [];
+  keys.forEach(function (k) {
+    parts.push(JSON.stringify(k) + ":" +
+      JSON.stringify(entry[k]));
+  });
+  return "{" + parts.join(",") + "}";
+}
+
+/* Capture the load shapes: every entry exactly as
+   the state the just completed load left builds it.
+   Called at both load tails beside catalogArmed =
+   true (tasks.js). A load re-bases all three guard
+   memories: what the load brought in is the session's
+   new standing knowledge, and refusals and adoptions
+   judged against an older state no longer apply. */
+function captureCatalogGuardLoadShapes() {
+  const shapes = Object.create(null);
+  try {
+    buildCatalogObject().entries.forEach(function (entry) {
+      if (entry && typeof entry.id === "string" && entry.id) {
+        shapes[entry.id] = catalogGuardEntryText(entry);
+      }
+    });
+  } catch (err) {
+    /* A failed capture leaves the map empty: every
+       local entry then reads as changed since the
+       load, which is the pre guard behavior, never a
+       wrong refusal. */
+  }
+  catalogGuardLoadShapes = shapes;
+  catalogGuardRefusedShapes = Object.create(null);
+  catalogGuardAdoptedIds = Object.create(null);
+}
+
+function resetCatalogGuardState() {
+  catalogGuardLoadShapes = Object.create(null);
+  catalogGuardRefusedShapes = Object.create(null);
+  catalogGuardAdoptedIds = Object.create(null);
+}
+
+/* The baseline, the entries of the catalog this
+   session last read or wrote, by id; null when no
+   entries text stands (the catalog never read cleanly
+   this session), which retires the baseline judgments
+   and leaves the stamp and shape ones. */
+function catalogGuardBaselineById() {
+  if (!lastCatalogEntriesText) { return null; }
+  let entries = null;
+  try {
+    entries = JSON.parse(lastCatalogEntriesText);
+  } catch (err) { return null; }
+  if (!Array.isArray(entries)) { return null; }
+  const byId = Object.create(null);
+  entries.forEach(function (entry) {
+    if (entry && typeof entry.id === "string" && entry.id &&
+        !byId[entry.id]) {
+      byId[entry.id] = entry;
+    }
+  });
+  return byId;
+}
+
+/* One contested entry (both sides hold the id, and
+   the forms differ): the winner, judged as the
+   section comment above lays out. */
+function catalogGuardFreshnessContest(local, stored, base) {
+  const localText = catalogGuardEntryText(local);
+  const storedText = catalogGuardEntryText(stored);
+  if (catalogGuardRefusedShapes[local.id] === localText) {
+    return stored;
+  }
+  const baseText = base ? catalogGuardEntryText(base) : null;
+  /* Load derived forms cannot overrule the store:
+     the local form is exactly the one the last load
+     left standing, so this session has not
+     deliberately changed the entry since. */
+  if (catalogGuardLoadShapes[local.id] === localText) {
+    catalogGuardRefusedShapes[local.id] = localText;
+    return stored;
+  }
+  if (baseText !== null && storedText === baseText) {
+    delete catalogGuardRefusedShapes[local.id];
+    return local;
+  }
+  if (baseText !== null && localText === baseText) {
+    catalogGuardRefusedShapes[local.id] = localText;
+    return stored;
+  }
+  /* Both sides moved (or no baseline stands): the
+     fresher entry wins, by its updated stamp, then
+     by whose file token moved away from the
+     baseline's; a full tie leaves the local form
+     standing, the deliberate in-session change
+     (a Doc-backed move changes nothing else). */
+  let winner = local;
+  let loser = stored;
+  const lu = local.updated || "";
+  const su = stored.updated || "";
+  if (su > lu) {
+    winner = stored;
+    loser = local;
+  } else if (su === lu && base) {
+    const bt = base.token || null;
+    const lm = (local.token || null) !== bt;
+    const sm = (stored.token || null) !== bt;
+    if (sm && !lm) {
+      winner = stored;
+      loser = local;
+    }
+  }
+  let out = winner;
+  if (base) {
+    /* Untouched field rescue: a field the winner
+       never moved from baseline takes the loser's
+       moved value, so the other side's rename, move,
+       or preview survives this side's win. */
+    const fields = ["notebook", "title", "preview"];
+    for (let i = 0; i < fields.length; i++) {
+      const f = fields[i];
+      if (winner[f] === base[f] && loser[f] !== base[f]) {
+        if (out === winner) {
+          out = Object.assign({}, winner);
+        }
+        out[f] = loser[f];
+      }
+    }
+  }
+  /* At a full tie of stamp and token both forms
+     claim the same file revision, so an empty
+     preview on the winner is a no body artifact,
+     never information: the standing preview wins. */
+  if ((local.updated || "") === (stored.updated || "") &&
+      (local.token || null) === (stored.token || null) &&
+      !out.preview && loser.preview) {
+    if (out === winner) {
+      out = Object.assign({}, winner);
+    }
+    out.preview = loser.preview;
+  }
+  if (out === stored || winner === stored) {
+    catalogGuardRefusedShapes[local.id] = localText;
+  } else {
+    delete catalogGuardRefusedShapes[local.id];
+  }
+  return out;
+}
+
+function catalogGuardFreshnessMergedEntries(localEntries,
+    storedEntries) {
+  if (!Array.isArray(localEntries)) { return localEntries; }
+  if (!Array.isArray(storedEntries) || !storedEntries.length) {
+    return localEntries;
+  }
+  const baseline = catalogGuardBaselineById();
+  const deletedIds = (typeof pendingDeleteIds === "function")
+    ? pendingDeleteIds() : {};
+  const storedById = Object.create(null);
+  storedEntries.forEach(function (entry) {
+    if (entry && typeof entry.id === "string" && entry.id &&
+        !storedById[entry.id]) {
+      storedById[entry.id] = entry;
+    }
+  });
+  const localIds = Object.create(null);
+  const out = [];
+  localEntries.forEach(function (entry) {
+    if (!entry || typeof entry.id !== "string" || !entry.id) {
+      out.push(entry);
+      return;
+    }
+    if (localIds[entry.id]) {
+      /* A second row for the id: the collapse below
+         judges it against the stored row, as before. */
+      out.push(entry);
+      return;
+    }
+    localIds[entry.id] = true;
+    if (deletedIds[entry.id]) { return; }
+    const stored = storedById[entry.id];
+    if (!stored) {
+      if (baseline && baseline[entry.id]) {
+        /* The baseline held it and the store no
+           longer does: it was removed there, and
+           this stale copy does not resurrect it. */
+        return;
+      }
+      out.push(entry);
+      return;
+    }
+    if (catalogGuardEntryText(entry) ===
+        catalogGuardEntryText(stored)) {
+      delete catalogGuardRefusedShapes[entry.id];
+      out.push(entry);
+      return;
+    }
+    out.push(catalogGuardFreshnessContest(entry, stored,
+      baseline ? baseline[entry.id] || null : null));
+  });
+  storedEntries.forEach(function (entry) {
+    if (!entry || typeof entry.id !== "string" || !entry.id) {
+      return;
+    }
+    if (localIds[entry.id]) { return; }
+    if (storedById[entry.id] !== entry) { return; }
+    if (deletedIds[entry.id]) {
+      delete catalogGuardAdoptedIds[entry.id];
+      return;
+    }
+    if (baseline && baseline[entry.id] &&
+        !catalogGuardAdoptedIds[entry.id]) {
+      /* The baseline held it and this session's
+         state no longer does: this session's own
+         flows removed it, and the drop stands. */
+      return;
+    }
+    catalogGuardAdoptedIds[entry.id] = true;
+    out.push(entry);
+  });
+  return out;
+}
+
 /* The stored catalog's entries, for the guard: the
    parsed entries array; an empty array when the store
    holds no catalog, or one that does not parse (the
@@ -814,13 +1136,20 @@ async function readStoredCatalogEntries() {
    read already holds), so this write, the only catalog
    write path there is (saveCache schedules it; nothing
    else puts catalog.json), can never revert a converted
-   entry to file-backed. */
+   entry to file-backed.
+   v2.215: the snapshot's entries then pass the freshness
+   guard (catalogGuardFreshnessMergedEntries above), in
+   this write and in the retry alike, so the write can
+   never replace an entry with an older version of it,
+   drop one it merely has not seen, or resurrect one
+   another session trashed or deleted. */
 async function writeCatalogOnce() {
   const snapshot = buildCatalogObject();
   const storedEntries = await readStoredCatalogEntries();
   if (storedEntries === null) { return false; }
-  snapshot.entries = catalogGuardMergedEntries(
-    snapshot.entries, storedEntries);
+  snapshot.entries = catalogGuardFreshnessMergedEntries(
+    catalogGuardMergedEntries(
+      snapshot.entries, storedEntries), storedEntries);
   /* v2.207: one row per (collection, id), always (see
      catalogCollapseDuplicateEntries above). */
   snapshot.entries = catalogCollapseDuplicateEntries(
@@ -849,8 +1178,10 @@ async function writeCatalogOnce() {
           }
         } catch (err3) { freshEntries = []; }
         const retryEntries = catalogCollapseDuplicateEntries(
-          catalogGuardMergedEntries(
-            snapshot.entries, freshEntries), freshEntries);
+          catalogGuardFreshnessMergedEntries(
+            catalogGuardMergedEntries(
+              snapshot.entries, freshEntries), freshEntries),
+          freshEntries);
         retryEntriesText = JSON.stringify(retryEntries);
         retryText = JSON.stringify({
           version: snapshot.version,

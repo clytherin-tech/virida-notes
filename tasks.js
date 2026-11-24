@@ -2469,6 +2469,10 @@ function resetCatalogRuntimeState() {
   lastCatalogDocEntries = [];
   /* v2.207: the file hints reset with the stash. */
   lastCatalogFileHints = Object.create(null);
+  /* v2.215: the catalog freshness guard's memories
+     belong to the signed in session, like the rest
+     of the catalog runtime state above. */
+  resetCatalogGuardState();
   resetDocNotesState();
   pendingIncoming = null;
   incomingProcessedToken = null;
@@ -3812,6 +3816,10 @@ async function loadPatchedFromRepo(plan) {
   rememberLastSavedContentForAllNotes();
   clearVersionHistoryCache();
   catalogArmed = true;
+  /* v2.215: the catalog freshness guard's load
+     shapes are this load's settled state, captured
+     before anything can mutate it. */
+  captureCatalogGuardLoadShapes();
   checkNoteReminders();
   maybeOpenPendingNoteReminder();
   pruneShortcuts();
@@ -4153,6 +4161,10 @@ async function finishLoadFromRepo(loaded, tasksPromise, tasksGeneration) {
   /* v2.20: from here on this session may maintain the catalog;
      the saveCache below schedules its first (re)build check. */
   catalogArmed = true;
+  /* v2.215: the catalog freshness guard's load
+     shapes are this load's settled state, captured
+     before anything can mutate it. */
+  captureCatalogGuardLoadShapes();
   /* v2.53: the tasks' post load pass (open editor refresh
      under the untouched rule, the reminder catch up, and
      any notification click waiting to open its task) ran
