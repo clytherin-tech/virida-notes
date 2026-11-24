@@ -5246,6 +5246,9 @@ function positionTableMenuBtn() {
    the table), mirroring how the image menu closes on its own. */
 function closeTableMenu() {
   closeTableSubmenus();
+  /* v2.220: the strips' right-click menu is table
+     furniture too: every parent close puts it away. */
+  closeStripMenu();
   const menu = document.getElementById("tableMenu");
   if (menu) { menu.classList.add("hidden"); }
   const btn = document.getElementById("tableMenuBtn");
@@ -6024,7 +6027,38 @@ function tableStripClipRect() {
   /* A zero sized rect names no standing editor area (a
      hidden wrap, or a harness with no layout): there is
      no area to clip against, so the natural rect stands. */
-  return rect.width > 0 && rect.height > 0 ? rect : null;
+  if (!(rect.width > 0 && rect.height > 0)) { return null; }
+  /* v2.220: the top bound is the toolbar's bottom edge,
+     not the scroller's top. The formatting toolbar is
+     position:sticky at the top of this same scroller
+     (the .toolbar rule in styles.css), so once the note
+     scrolls it stands over the scroller's own top band,
+     its bottom edge a toolbar's height below the
+     scroller's top (measured on the real shell: the
+     scroller's top at 237.8, the stuck toolbar's bottom
+     at 337.8). Round 5 clipped to the scroller's rect
+     alone, so a segment could still paint over the
+     toolbar anywhere in that band, which is what
+     Chris's device showed while the round 5 probe,
+     measuring only the scroller, passed. When the
+     toolbar's rect crosses the scroller's top band,
+     the clip starts at its bottom: the visible text
+     area below the toolbar. A toolbar standing clear
+     of the band (its rect at rest sits in the flow
+     above the body, and every table stands below it)
+     or carrying no height changes nothing. */
+  let top = rect.top;
+  const toolbar = document.getElementById("toolbar");
+  if (toolbar) {
+    const tr = toolbar.getBoundingClientRect();
+    if (tr.height > 0 && tr.bottom > top &&
+        tr.top < rect.bottom) {
+      top = Math.min(tr.bottom, rect.bottom);
+    }
+  }
+  return { left: rect.left, top: top, right: rect.right,
+    bottom: rect.bottom, width: rect.width,
+    height: rect.bottom - top };
 }
 
 /* The intersection of one segment's natural rect with the
@@ -6132,6 +6166,238 @@ function updateTableSelectStrips() {
     buildActiveTableStrips(table);
   }
   positionAllTableStrips();
+}
+
+/* ----- v2.220: the selector strips' right-click menu -----
+   Chris's round 6 ask (2026-11-24): a right-click on a
+   letter or number tab opens a menu at the pointer,
+   because on a large table the Table button is off the
+   screen and unreachable. The menu is its own furniture
+   (#tableStripMenu, a sibling of #tableMenu inside
+   .editor-inner, so it can never be saved into a note),
+   dressed as the Table menu's own card. Its structural
+   rows act on the right-clicked tab's row or column and
+   run through runTableAction itself, against a captured
+   cell of that row or column, so the actions, their
+   guards, and their undo steps are the Table menu's.
+   Its formatting rows are the Table menu's cell section
+   (sort, filter, the header toggle, cell background,
+   border style and width, reset style, align content,
+   set table width, copy cell) and run through that
+   section's own functions, against the capture those
+   functions already read: the standing multi-cell range
+   when one stands in the tab's table, else the caret's
+   or hovered cell, else the tab's own cell. A right
+   press never selects (the strip press handler answers
+   only the left button now), so opening this menu
+   leaves the cell selection and the caret exactly as
+   they stood, and the formatting rows land on the
+   cells Chris already has highlighted. */
+let stripMenuSpec = null;  /* the tab spec the open menu acts on */
+let stripMenuCell = null;  /* a cell of that tab's row or column */
+
+function stripMenuEl() {
+  return document.getElementById("tableStripMenu");
+}
+
+/* Put the strip menu away and forget its tab. Called from
+   closeTableMenu, so every dismissal the table furniture
+   already has (a scroll, an Escape, a note switch, an
+   editor lock, another menu's action) puts this menu
+   away with the rest. */
+function closeStripMenu() {
+  const menu = stripMenuEl();
+  if (menu) { menu.classList.add("hidden"); }
+  stripMenuSpec = null;
+  stripMenuCell = null;
+}
+
+/* A live cell of the tab's own row or column: the first
+   cell of the row for a number tab, the first cell
+   standing at the index for a letter tab. This is the
+   cell the structural actions are captured against;
+   runTableAction reads its row and its index within
+   the row, which names the tab's row or column exactly. */
+function stripSpecCell(spec) {
+  if (!spec || !spec.table || !spec.table.isConnected) {
+    return null;
+  }
+  if (spec.kind === "row") {
+    return (spec.rowEl && spec.rowEl.isConnected &&
+      spec.rowEl.cells.length) ? spec.rowEl.cells[0] : null;
+  }
+  if (spec.kind === "col") {
+    const rows = spec.table.rows;
+    for (let i = 0; i < rows.length; i++) {
+      if (rows[i].cells.length > spec.index) {
+        return rows[i].cells[spec.index];
+      }
+    }
+  }
+  return null;
+}
+
+/* The cell the menu's formatting rows anchor to: the
+   standing range's first cell when a range stands in
+   this table, else a standing single anchor, else the
+   caret's cell, else the hovered cell, else the tab's
+   own cell. Judged without moving anything: the
+   selection and the caret are read, never written. */
+function stripFormatAnchor(spec, tabCell) {
+  const range = currentRangeCells();
+  if (range && range[0].closest("table") === spec.table) {
+    return range[0];
+  }
+  if (cellSelAnchor && cellSelAnchor.isConnected &&
+      cellSelAnchor.closest("table") === spec.table) {
+    return cellSelAnchor;
+  }
+  const sel = window.getSelection();
+  const caret = (sel && sel.rangeCount)
+    ? tableCellFromNode(sel.anchorNode) : null;
+  if (caret && caret.closest("table") === spec.table) {
+    return caret;
+  }
+  if (cellMenuCell && cellMenuCell.isConnected &&
+      cellMenuCell.closest("table") === spec.table) {
+    return cellMenuCell;
+  }
+  return tabCell;
+}
+
+/* The Delete guards for the tab's own section, judged by
+   the same rules syncTableMenuGuards applies to the
+   Table menu (Delete row refuses in the header row and
+   at one row; Delete column at one column), against the
+   tab's captured cell. runTableAction enforces them
+   again when the row is pressed. */
+function syncStripMenuGuards() {
+  const menu = stripMenuEl();
+  const cell = stripMenuCell;
+  if (!menu || !cell) { return; }
+  const row = cell.parentElement;
+  const table = cell.closest("table");
+  if (!row || !table) { return; }
+  const inHeader = row.parentElement &&
+    row.parentElement.tagName === "THEAD";
+  const delRow = menu.querySelector(
+    '[data-table-action="deleteRow"]');
+  const delCol = menu.querySelector(
+    '[data-table-action="deleteCol"]');
+  if (delRow) {
+    delRow.disabled = !!inHeader || table.rows.length <= 1;
+  }
+  if (delCol) { delCol.disabled = row.cells.length <= 1; }
+}
+
+/* Fill the strip menu's current values from the
+   formatting capture, the same values syncCellMenuState
+   fills for the Table menu, and start with every sub
+   panel closed. */
+function syncStripMenuState() {
+  const cell = cellActionCell;
+  const table = cellActionTable;
+  if (!cell || !table) { return; }
+  const colIdx = cellIndexOf(cell);
+  const sortState = tableSortState(table);
+  document.getElementById("stripMenuSortValue").textContent =
+    sortState && sortState.col === colIdx
+      ? (sortState.dir === "asc" ? "Ascending" : "Descending")
+      : "None";
+  const filters = tableFilters(table);
+  const filterValue = filters[String(colIdx)] || "";
+  document.getElementById("stripMenuFilterValue").textContent =
+    filterValue || "None";
+  document.getElementById("stripFilterInput").value = filterValue;
+  document.getElementById("stripHeaderToggle").setAttribute(
+    "aria-checked", tableHasHeaderRow(table) ? "true" : "false");
+  const bs = cell.style.borderStyle || "";
+  document.getElementById("stripMenuBorderStyleValue")
+    .textContent =
+    bs ? bs.charAt(0).toUpperCase() + bs.slice(1) : "";
+  const bw = cell.style.borderWidth || "";
+  document.getElementById("stripMenuBorderWidthValue")
+    .textContent =
+    bw === "1px" ? "Thin" : bw === "2px" ? "Medium"
+      : bw === "4px" ? "Thick" : bw;
+  const va = cell.style.verticalAlign || "";
+  document.getElementById("stripMenuAlignValue").textContent =
+    va === "middle" ? "Middle" : va === "bottom" ? "Bottom"
+      : "Top";
+  document.getElementById("stripMenuWidthValue").textContent =
+    cell.style.width || "Auto";
+}
+
+/* Park the strip menu at the pointer, clamped into the
+   viewport with the same 8px margin the table furniture
+   uses, flipping back from the right and bottom edges
+   when the menu would spill off them. */
+function positionStripMenu(x, y) {
+  const menu = stripMenuEl();
+  if (!menu) { return; }
+  const width = menu.offsetWidth || 240;
+  const height = menu.offsetHeight || 420;
+  let left = Math.max(8, Math.min(x,
+    window.innerWidth - width - 8));
+  let top = Math.max(8, Math.min(y,
+    window.innerHeight - height - 8));
+  menu.style.left = left + "px";
+  menu.style.top = top + "px";
+}
+
+/* Open the strip menu for one tab at the pointer. The
+   captures are set exactly as openTableMenu sets them,
+   with the one difference Chris's rule names: the
+   formatting capture names the standing selection (see
+   stripFormatAnchor), never the tab itself, and nothing
+   here touches the live selection or the caret. */
+function openStripMenu(spec, x, y) {
+  const menu = stripMenuEl();
+  const cell = stripSpecCell(spec);
+  if (!menu || !cell) { return; }
+  closeTableMenu();
+  stripMenuSpec = spec;
+  stripMenuCell = cell;
+  tableMenuActionCell = cell;
+  tableMenuActionTable = spec.table;
+  const anchor = stripFormatAnchor(spec, cell);
+  cellActionCell = anchor;
+  cellActionTable = spec.table;
+  const range = currentRangeCells();
+  cellActionCells = (range &&
+    range[0].closest("table") === spec.table)
+    ? range.slice() : [anchor];
+  menu.querySelectorAll("[data-strip-section]")
+    .forEach(function (section) {
+      section.style.display =
+        section.getAttribute("data-strip-section") ===
+          spec.kind ? "" : "none";
+    });
+  menu.querySelectorAll(".strip-sub").forEach(function (sub) {
+    sub.classList.add("hidden");
+  });
+  syncStripMenuGuards();
+  syncStripMenuState();
+  menu.classList.remove("hidden");
+  positionStripMenu(x, y);
+}
+
+/* Show one of the strip menu's sub panels and close the
+   others, the inline counterpart of the Table menu's
+   toggleCellSub for this menu's own panels. */
+function toggleStripSub(name) {
+  const panels = { sort: "stripSortSub",
+    filter: "stripFilterSub", background: "stripBgSub",
+    borderStyle: "stripBorderStyleSub",
+    borderWidth: "stripBorderWidthSub",
+    align: "stripAlignSub", width: "stripWidthSub" };
+  const menu = stripMenuEl();
+  if (!menu) { return; }
+  const target = document.getElementById(panels[name] || "");
+  menu.querySelectorAll(".strip-sub").forEach(function (sub) {
+    if (sub !== target) { sub.classList.add("hidden"); }
+  });
+  if (target) { target.classList.toggle("hidden"); }
 }
 
 /* The insertion boundary nearest a pointer coordinate among
@@ -6333,6 +6599,12 @@ function updateCellMenu() {
   if (!cellEditorEditable()) { hideCellMenu(); return; }
   const menu = document.getElementById("tableMenu");
   if (menu && !menu.classList.contains("hidden")) { return; }
+  /* v2.220: the strip menu acts on its capture too, so
+     the watcher stands still while it is open. */
+  const stripMenu = document.getElementById("tableStripMenu");
+  if (stripMenu && !stripMenu.classList.contains("hidden")) {
+    return;
+  }
   if (cellDragState && cellDragState.active) { return; }
   if (tableResizeDrag) { return; }
   if (stripPressActive) { return; }
@@ -6899,6 +7171,39 @@ function wireCellMenu() {
   buildSwatches("cellBgSwatches", function (value) {
     applyCellBackground(value);
   });
+  /* v2.220: the strip menu's background panel is built
+     from the same palette and applies through the same
+     action, against the strip menu's capture. */
+  buildSwatches("stripBgSwatches", function (value) {
+    applyCellBackground(value);
+  });
+  document.getElementById("stripBgNone").addEventListener("click",
+    function () { applyCellBackground(""); });
+  const stripCustomInput =
+    document.getElementById("stripBgCustom");
+  stripCustomInput.value = state.customCellBgColor;
+  stripCustomInput.addEventListener("click", function () {
+    beginCellCustomColor(stripCustomInput);
+  });
+  stripCustomInput.addEventListener("input", function () {
+    cellCustomColorInput(stripCustomInput);
+  });
+  stripCustomInput.addEventListener("change", function () {
+    commitCellCustomColor(stripCustomInput);
+  });
+  /* The strip menu's filter form applies through the
+     cell section's own form action: the typed text is
+     handed to the standing input that action reads, so
+     the judgment (the captured cell's column, the
+     selection clearing, the dirty mark) is the Table
+     menu's exactly. */
+  document.getElementById("stripFilterForm")
+    .addEventListener("submit", function (ev) {
+      ev.preventDefault();
+      document.getElementById("cellFilterInput").value =
+        document.getElementById("stripFilterInput").value;
+      applyCellFilterFromForm();
+    });
   document.getElementById("cellBgNone").addEventListener("click",
     function () { applyCellBackground(""); });
 
@@ -6924,6 +7229,7 @@ function wireCellMenu() {
     if (!target || !target.closest) { return; }
     if (target.closest("#tableMenu") ||
         target.closest("#tableMenuBtn") ||
+        target.closest("#tableStripMenu") ||
         target.closest("#tableFilterChip")) { return; }
     /* v2.209: the selector strips and the Add row bar are
        table furniture too: resting on them is not leaving
@@ -7073,6 +7379,14 @@ function wireCellMenu() {
   stripLayer.addEventListener("pointerdown", function (ev) {
     const hit = stripSpecOf(ev);
     if (!hit) { return; }
+    /* v2.220: only a left press selects. A right press is
+       the context menu's gesture (the contextmenu listener
+       below): it must not select the tab's row or column,
+       must not arm a reorder drag, and must not disturb
+       the standing cell selection or caret, so the press
+       handler steps aside for it entirely, before any
+       preventDefault or capture could mark the gesture. */
+    if (ev.button !== 0) { return; }
     ev.preventDefault();
     ev.stopPropagation();
     stripPressActive = true;
@@ -7099,6 +7413,9 @@ function wireCellMenu() {
     }
   });
   stripLayer.addEventListener("mousedown", function (ev) {
+    /* v2.220: the right button's mousedown is the context
+       menu's, not the selection's: leave it alone. */
+    if (ev.button !== 0) { return; }
     ev.preventDefault();
   });
   document.addEventListener("pointermove", function (ev) {
@@ -7166,6 +7483,97 @@ function wireCellMenu() {
     const spec = hit.spec;
     if (!spec.table || !spec.table.isConnected) { return; }
     selectStripSlice(spec);
+  });
+
+  /* v2.220: the strips' right-click menu. A contextmenu
+     on a segment is suppressed (the browser's own menu
+     never stands on a tab) and opens the strip menu at
+     the pointer for that tab; a contextmenu landing
+     elsewhere in the layer keeps the standing behavior.
+     The menu's rows dispatch through one delegated
+     listener to the very functions the Table menu's rows
+     run: runTableAction for the structural rows (against
+     the tab's captured cell) and the cell section's
+     actions for the formatting rows (against the
+     standing selection's capture). */
+  stripLayer.addEventListener("contextmenu", function (ev) {
+    const hit = stripSpecOf(ev);
+    if (!hit) { return; }
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (!hit.spec.table || !hit.spec.table.isConnected) {
+      return;
+    }
+    openStripMenu(hit.spec, ev.clientX, ev.clientY);
+  });
+  document.getElementById("tableStripMenu")
+    .addEventListener("click", function (ev) {
+      const target = ev.target;
+      if (!target || !target.closest) { return; }
+      const actBtn = target.closest(
+        "button[data-table-action]");
+      if (actBtn) {
+        if (actBtn.disabled) { return; }
+        runTableAction(actBtn.getAttribute("data-table-action"));
+        return;
+      }
+      let el = target.closest("[data-cell-sort]");
+      if (el) { doCellSort(el.getAttribute("data-cell-sort")); return; }
+      el = target.closest("[data-cell-border-style]");
+      if (el) {
+        applyCellBorderStyle(
+          el.getAttribute("data-cell-border-style"));
+        return;
+      }
+      el = target.closest("[data-cell-border-width]");
+      if (el) {
+        applyCellBorderWidth(
+          el.getAttribute("data-cell-border-width"));
+        return;
+      }
+      el = target.closest("[data-cell-align]");
+      if (el) {
+        applyCellAlign(el.getAttribute("data-cell-align"));
+        return;
+      }
+      el = target.closest("[data-cell-width]");
+      if (el) {
+        applyCellColumnWidth(el.getAttribute("data-cell-width"));
+        return;
+      }
+      if (target.closest("#stripFilterClear")) {
+        clearCellFilter();
+        return;
+      }
+      if (target.closest("#stripHeaderToggle")) {
+        toggleCellHeaderRow();
+        return;
+      }
+      if (target.closest("#stripResetBtn")) {
+        resetCellStyles();
+        return;
+      }
+      if (target.closest("#stripCopyBtn")) {
+        copyCellSelection();
+        return;
+      }
+      el = target.closest("[data-strip-menu]");
+      if (el) {
+        toggleStripSub(el.getAttribute("data-strip-menu"));
+      }
+    });
+  /* A click anywhere outside the strip menu puts it away;
+     clicks on the menu itself and on the strips (the
+     right-click that opened it, and any left press that
+     follows it) are the menu's own business. */
+  document.addEventListener("click", function (ev) {
+    const menu = stripMenuEl();
+    if (!menu || menu.classList.contains("hidden")) { return; }
+    const target = ev.target;
+    if (!target || !target.closest) { return; }
+    if (target.closest("#tableStripMenu") ||
+        target.closest("#tableSelectStrips")) { return; }
+    closeStripMenu();
   });
 
   /* v2.210: the table chrome follows the body's structure:
@@ -7291,6 +7699,7 @@ function wireCellMenu() {
     if (!target || !target.closest) { return; }
     if (target.closest("#tableMenu") ||
         target.closest("#tableMenuBtn") ||
+        target.closest("#tableStripMenu") ||
         target.closest("#tableFilterChip") ||
         target.closest("#tableSelectStrips")) { return; }
     /* v2.209: the toolbar is exempt from the selection

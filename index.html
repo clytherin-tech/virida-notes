@@ -7275,6 +7275,90 @@
             <div class="att-menu-sep"></div>
             <button class="att-menu-item" type="button" id="cellCopyBtn">Copy cell</button>
           </div>
+          <!-- v2.220: the selector strips' right-click menu.
+               A right-click on a row (number) or column
+               (letter) tab opens it at the pointer: the
+               tab's own section carries its Add and Delete
+               actions, and the formatting section below
+               carries the Table menu's cell tools, for the
+               tables whose Table button stands off the
+               screen. It is a sibling of #tableMenu inside
+               .editor-inner, outside #noteBody, so it can
+               never be saved into a note. Its rows carry
+               the same data attributes as the Table menu's
+               and run through the same actions in the
+               script (the v2.220 strip menu section in
+               editor.js). -->
+          <div id="tableStripMenu" class="hidden" role="menu" aria-label="Table tab options">
+            <div data-strip-section="row">
+              <button class="att-menu-item" type="button" data-table-action="rowAbove">Add row above</button>
+              <button class="att-menu-item" type="button" data-table-action="rowBelow">Add row below</button>
+              <button class="att-menu-item" type="button" data-table-action="deleteRow">Delete row</button>
+            </div>
+            <div data-strip-section="col">
+              <button class="att-menu-item" type="button" data-table-action="colLeft">Add column left</button>
+              <button class="att-menu-item" type="button" data-table-action="colRight">Add column right</button>
+              <button class="att-menu-item" type="button" data-table-action="deleteCol">Delete column</button>
+            </div>
+            <div class="att-menu-sep"></div>
+            <button class="att-menu-item cell-flex" type="button" data-strip-menu="sort"><span>Sort column</span><span class="cell-menu-value" id="stripMenuSortValue">None</span></button>
+            <div class="cell-sub strip-sub hidden" id="stripSortSub">
+              <button class="att-menu-item" type="button" data-cell-sort="asc">Ascending</button>
+              <button class="att-menu-item" type="button" data-cell-sort="desc">Descending</button>
+            </div>
+            <button class="att-menu-item cell-flex" type="button" data-strip-menu="filter"><span>Filter column</span><span class="cell-menu-value" id="stripMenuFilterValue">None</span></button>
+            <div class="cell-sub strip-sub hidden" id="stripFilterSub">
+              <form id="stripFilterForm">
+                <div class="link-edit-field">
+                  <label for="stripFilterInput">Show rows containing</label>
+                  <input type="text" id="stripFilterInput" autocomplete="off">
+                </div>
+                <div class="cell-filter-actions">
+                  <button class="btn small" type="button" id="stripFilterClear">Clear</button>
+                  <button class="btn small" type="submit" id="stripFilterApply">Apply</button>
+                </div>
+              </form>
+            </div>
+            <div class="att-menu-sep"></div>
+            <button class="att-menu-item cell-flex" type="button" id="stripHeaderToggle" role="switch" aria-checked="false"><span>Header row</span><span class="cell-toggle" aria-hidden="true"><span class="cell-toggle-knob"></span></span></button>
+            <button class="att-menu-item cell-flex" type="button" data-strip-menu="background"><span>Cell background</span><span class="cell-menu-value">&#8250;</span></button>
+            <div class="cell-sub strip-sub hidden" id="stripBgSub">
+              <div class="tb-swatches" id="stripBgSwatches"></div>
+              <button class="att-menu-item" type="button" id="stripBgNone">None</button>
+              <label class="tb-custom-row">Custom <input type="color" id="stripBgCustom" value="#D9EAD3"></label>
+            </div>
+            <button class="att-menu-item cell-flex" type="button" data-strip-menu="borderStyle"><span>Border style</span><span class="cell-menu-value" id="stripMenuBorderStyleValue"></span></button>
+            <div class="cell-sub strip-sub hidden" id="stripBorderStyleSub">
+              <button class="att-menu-item" type="button" data-cell-border-style="solid">Solid</button>
+              <button class="att-menu-item" type="button" data-cell-border-style="dashed">Dashed</button>
+              <button class="att-menu-item" type="button" data-cell-border-style="dotted">Dotted</button>
+              <button class="att-menu-item" type="button" data-cell-border-style="none">None</button>
+            </div>
+            <button class="att-menu-item cell-flex" type="button" data-strip-menu="borderWidth"><span>Border width</span><span class="cell-menu-value" id="stripMenuBorderWidthValue"></span></button>
+            <div class="cell-sub strip-sub hidden" id="stripBorderWidthSub">
+              <button class="att-menu-item" type="button" data-cell-border-width="1px">Thin</button>
+              <button class="att-menu-item" type="button" data-cell-border-width="2px">Medium</button>
+              <button class="att-menu-item" type="button" data-cell-border-width="4px">Thick</button>
+            </div>
+            <button class="att-menu-item" type="button" id="stripResetBtn">Reset style</button>
+            <div class="att-menu-sep"></div>
+            <button class="att-menu-item cell-flex" type="button" data-strip-menu="align"><span>Align content</span><span class="cell-menu-value" id="stripMenuAlignValue">Top</span></button>
+            <div class="cell-sub strip-sub hidden" id="stripAlignSub">
+              <button class="att-menu-item" type="button" data-cell-align="top">Top</button>
+              <button class="att-menu-item" type="button" data-cell-align="middle">Middle</button>
+              <button class="att-menu-item" type="button" data-cell-align="bottom">Bottom</button>
+            </div>
+            <button class="att-menu-item cell-flex" type="button" data-strip-menu="width"><span>Set table width</span><span class="cell-menu-value" id="stripMenuWidthValue">Auto</span></button>
+            <div class="cell-sub strip-sub hidden" id="stripWidthSub">
+              <button class="att-menu-item" type="button" data-cell-width="">Auto</button>
+              <button class="att-menu-item" type="button" data-cell-width="15%">15%</button>
+              <button class="att-menu-item" type="button" data-cell-width="25%">25%</button>
+              <button class="att-menu-item" type="button" data-cell-width="33%">33%</button>
+              <button class="att-menu-item" type="button" data-cell-width="50%">50%</button>
+            </div>
+            <div class="att-menu-sep"></div>
+            <button class="att-menu-item" type="button" id="stripCopyBtn">Copy cell</button>
+          </div>
 
           <!-- v2.3, reshaped in v2.209: the filter chip, a SIBLING
                of #noteBody like the table furniture above, so it can
