@@ -4423,6 +4423,18 @@ body.dark .settings-section h3{color:var(--accent);}
 #settingsOrphanScanBtn:disabled{opacity:.55;cursor:default;}
 /* v2.72: the scan and Review buttons share one row. */
 .settings-orphan-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+/* v2.218: the Dropbox tab's rows: a waiting entry
+   (its label, its first words under it in the muted
+   voice, its Delete button at the row's end), a
+   standing rejected entry, and the history lines. */
+.dropbox-row{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border);}
+.dropbox-row:last-child{border-bottom:none;}
+.dropbox-main{flex:1;min-width:0;}
+.dropbox-label{font-size:14px;font-weight:600;overflow-wrap:anywhere;}
+.dropbox-snippet{font-size:13px;color:var(--muted);line-height:1.4;overflow-wrap:anywhere;}
+.dropbox-line{font-size:13.5px;line-height:1.45;overflow-wrap:anywhere;}
+.dropbox-note{font-size:13.5px;color:var(--muted);padding:4px 0;}
+.dropbox-history-row{display:block;}
 /* v2.72: the orphan scan's completion toast: a flex row
    (the message, its Review button when orphans stand,
    its dismiss) in the toast's own colors, persistent

@@ -12104,7 +12104,8 @@ function toggleSidebarMenu() {
    open on no section at all.
    -------------------------------------------------------------------------- */
 const SETTINGS_TAB_KEYS = ["appearance", "connection",
-  "notifications", "editor", "history", "webclip", "start"];
+  "notifications", "editor", "history", "webclip", "dropbox",
+  "start"];
 let settingsActiveTab = "appearance";
 
 function settingsTabButton(key) {
@@ -12122,6 +12123,10 @@ function settingsTabPanel(key) {
 function selectSettingsTab(key) {
   if (SETTINGS_TAB_KEYS.indexOf(key) < 0) { key = "appearance"; }
   settingsActiveTab = key;
+  /* v2.218: the Dropbox tab reads the box and the
+     history fresh every time it is shown, so what
+     stands there is what stands now. */
+  if (key === "dropbox") { renderDropboxSettings(); }
   SETTINGS_TAB_KEYS.forEach(function (k) {
     const active = k === key;
     const btn = settingsTabButton(k);
@@ -12132,6 +12137,177 @@ function selectSettingsTab(key) {
     const panelEl = settingsTabPanel(k);
     if (panelEl) { panelEl.classList.toggle("hidden", !active); }
   });
+}
+
+/* v2.218: the Dropbox tab's shown pending keys, by
+   row: a row's Delete button names its entry by its
+   place here, so no entry's whole text stands in the
+   DOM. Rebuilt by every render of the tab. */
+let dropboxShownKeys = [];
+
+/* v2.218: a plain line in the Dropbox tab, in the
+   muted voice: the empty states and the unreadable
+   box are said this way. */
+function dropboxSettingsNote(text) {
+  const el = document.createElement("div");
+  el.className = "dropbox-note";
+  el.textContent = text;
+  return el;
+}
+
+/* v2.218: one waiting entry's row: its label, its
+   first words under it, and its Delete button at the
+   row's end. The button carries the row's place in
+   dropboxShownKeys, nothing of the entry itself. */
+function dropboxPendingRow(entry, idx) {
+  const row = document.createElement("div");
+  row.className = "dropbox-row";
+  const main = document.createElement("div");
+  main.className = "dropbox-main";
+  const label = document.createElement("div");
+  label.className = "dropbox-label";
+  label.textContent = dropboxEntryLabel(entry);
+  main.appendChild(label);
+  const snippet = dropboxEntrySnippet(entry);
+  if (snippet) {
+    const snip = document.createElement("div");
+    snip.className = "dropbox-snippet";
+    snip.textContent = snippet;
+    main.appendChild(snip);
+  }
+  row.appendChild(main);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn small";
+  btn.textContent = "Delete";
+  btn.setAttribute("data-dbx-delete", String(idx));
+  row.appendChild(btn);
+  return row;
+}
+
+/* v2.218: one standing rejected record's row: what it
+   was, and the reason it stands rejected. Records
+   carry {entry, error, at}; a record in any other
+   shape is named by itself and given no reason. */
+function dropboxRejectedRow(rec) {
+  const row = document.createElement("div");
+  row.className = "dropbox-row";
+  const main = document.createElement("div");
+  main.className = "dropbox-main";
+  const label = document.createElement("div");
+  label.className = "dropbox-label";
+  let reason = "";
+  if (rec && typeof rec === "object" &&
+      ("entry" in rec || "error" in rec)) {
+    label.textContent = dropboxEntryLabel(rec.entry);
+    reason = typeof rec.error === "string" ? rec.error : "";
+  } else {
+    label.textContent = dropboxEntryLabel(rec);
+  }
+  main.appendChild(label);
+  if (reason) {
+    const snip = document.createElement("div");
+    snip.className = "dropbox-snippet";
+    snip.textContent = reason;
+    main.appendChild(snip);
+  }
+  row.appendChild(main);
+  return row;
+}
+
+/* v2.218: one history record's line: the outcome
+   first, then what it was, then the outcome's own
+   detail (the note a duplicate names, the reason a
+   rejection gave), then when it happened. */
+function dropboxHistoryLine(rec) {
+  let head = "";
+  const title = rec.title || "(untitled)";
+  if (rec.outcome === "imported") {
+    head = "Imported: " + title;
+  } else if (rec.outcome === "duplicate") {
+    head = "Duplicate, skipped: " + title +
+      (rec.detail ? " (already have \"" + rec.detail + "\")" : "");
+  } else {
+    head = "Rejected: " + title +
+      (rec.detail ? " (" + rec.detail + ")" : "");
+  }
+  const when = rec.at ? new Date(rec.at) : null;
+  if (when && !isNaN(when.getTime())) {
+    head += " \u2014 " + when.toLocaleString();
+  }
+  return head;
+}
+
+/* v2.218: fill the Dropbox tab: what is waiting in
+   the box (a Delete standing on each), what stands
+   rejected in it, and the recent history, newest
+   first. The store is read fresh on every call; a
+   box that cannot be read says so in the tab rather
+   than showing a stale or empty face. The empty
+   states are plain: the box stands empty most of
+   the time, and that is a fine answer. */
+async function renderDropboxSettings() {
+  const pendingEl = document.getElementById(
+    "settingsDropboxPending");
+  const rejectedEl = document.getElementById(
+    "settingsDropboxRejected");
+  const historyEl = document.getElementById(
+    "settingsDropboxHistory");
+  if (!pendingEl || !rejectedEl || !historyEl) { return; }
+  let box = null;
+  let boxFailed = false;
+  try {
+    const file = await storeGetFile(INCOMING_FILE);
+    if (file) {
+      try { box = JSON.parse(file.text); } catch (err) {
+        box = null;
+      }
+      if (!box || !Array.isArray(box.notes) ||
+          !Array.isArray(box.rejected)) {
+        box = null;
+        boxFailed = true;
+      }
+    }
+  } catch (err) { boxFailed = true; }
+  dropboxShownKeys = [];
+  pendingEl.innerHTML = "";
+  rejectedEl.innerHTML = "";
+  if (boxFailed) {
+    pendingEl.appendChild(dropboxSettingsNote(
+      "The drop box could not be read just now."));
+  } else if (!box || !box.notes.length) {
+    pendingEl.appendChild(dropboxSettingsNote(
+      "Nothing is waiting in the drop box."));
+  } else {
+    box.notes.forEach(function (entry, i) {
+      dropboxShownKeys.push(dropboxEntryKey(entry));
+      pendingEl.appendChild(dropboxPendingRow(entry, i));
+    });
+  }
+  if (box && box.rejected.length) {
+    box.rejected.forEach(function (rec) {
+      rejectedEl.appendChild(dropboxRejectedRow(rec));
+    });
+  } else if (box) {
+    rejectedEl.appendChild(dropboxSettingsNote(
+      "Nothing stands rejected in the drop box."));
+  }
+  const hist = await readDropboxHistory();
+  historyEl.innerHTML = "";
+  if (!hist.records.length) {
+    historyEl.appendChild(dropboxSettingsNote(
+      "Nothing has come through the drop box yet."));
+  } else {
+    hist.records.slice().reverse().forEach(function (rec) {
+      const row = document.createElement("div");
+      row.className = "dropbox-row dropbox-history-row";
+      const line = document.createElement("div");
+      line.className = "dropbox-line";
+      line.textContent = dropboxHistoryLine(rec);
+      row.appendChild(line);
+      historyEl.appendChild(row);
+    });
+  }
 }
 
 function syncSettingsThemeControls() {
@@ -12235,6 +12411,9 @@ function syncSettingsControls() {
      state); opening Settings never clears it and never
      starts a scan. */
   renderOrphanScanSection();
+  /* v2.218: the Dropbox section reads the box and the
+     history fresh, like the rows above read theirs. */
+  renderDropboxSettings();
 }
 
 function openSettingsModal() {

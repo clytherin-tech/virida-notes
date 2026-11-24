@@ -1299,6 +1299,43 @@ function wireEvents() {
   document.getElementById("settingsRefreshBtn").addEventListener("click", function () {
     refreshGoogleConnection().catch(function (err) { toast(err.message, true); });
   });
+  /* v2.218: the Dropbox tab's Delete buttons, delegated
+     from the waiting list: a button names its entry by
+     its place in the shown list, and the removal
+     itself (deleteDropboxPending) works from a fresh
+     read of the box. The answer stands in the tab's
+     feedback line, in plain words for each outcome,
+     and the tab renders again from what the box holds
+     now. */
+  const dropboxPendingEl = document.getElementById(
+    "settingsDropboxPending");
+  if (dropboxPendingEl) {
+    dropboxPendingEl.addEventListener("click", function (ev) {
+      const btn = ev.target.closest("[data-dbx-delete]");
+      if (!btn) { return; }
+      const key = dropboxShownKeys[
+        Number(btn.getAttribute("data-dbx-delete"))];
+      if (key == null) { renderDropboxSettings(); return; }
+      btn.disabled = true;
+      deleteDropboxPending(key).then(function (res) {
+        const fb = document.getElementById(
+          "settingsDropboxFeedback");
+        if (fb) {
+          fb.textContent =
+            res.status === "deleted"
+              ? "Removed \"" + res.label +
+                "\" from the drop box."
+            : res.status === "gone"
+              ? "That entry is no longer in the drop box."
+            : res.status === "malformed"
+              ? "The drop box is not in its usual shape, " +
+                "so nothing was removed."
+              : "That entry could not be removed just now.";
+        }
+        renderDropboxSettings();
+      });
+    });
+  }
   /* v2.80: the Google Calendar row's Connect button runs
      the consent forcing sign in (the new scope's only
      route), exactly like the calendar surfaces' caption

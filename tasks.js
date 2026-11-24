@@ -2124,6 +2124,217 @@ function subtractDropboxEntries(list, removalKeys) {
   });
 }
 
+/* v2.218: the drop box history file, the app's own
+   record of what the box has done, kept beside the box
+   in the store so the Settings Dropbox tab can show it
+   on any device. One JSON object, {records: [...]},
+   each record {at, outcome, title, detail}: the
+   outcome the drain itself judged, the title the entry
+   carried, and the outcome's own detail (the note a
+   duplicate matched, the reason a rejection gave).
+   Capped at the most recent 50 records. */
+const DROPBOX_HISTORY_FILE = "dropbox-history.json";
+const DROPBOX_HISTORY_CAP = 50;
+
+/* v2.218: the note text a drop box entry carries, in
+   either of its two forms; anything else carries
+   none. */
+function dropboxEntryText(entry) {
+  if (typeof entry === "string") { return entry; }
+  if (entry && typeof entry === "object" &&
+      typeof entry.note === "string") {
+    return entry.note;
+  }
+  return "";
+}
+
+/* v2.218: a drop box entry's readable label: the title
+   its note text names in its front matter when it has
+   one, else its first standing line, cut short. The
+   history and the Settings tab name entries by it, so
+   a waiting or processed entry can be recognized
+   without opening it. */
+function dropboxEntryLabel(entry) {
+  const text = dropboxEntryText(entry);
+  if (text) {
+    const fm = text.match(/^---\n([\s\S]*?)\n---/);
+    if (fm) {
+      const tm = fm[1].match(/^title:[ \t]*(.*)$/m);
+      if (tm && tm[1].trim()) {
+        return tm[1].trim().slice(0, 120);
+      }
+    }
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].replace(/^#+\s*/, "").trim();
+      if (line && line !== "---") {
+        return line.slice(0, 120);
+      }
+    }
+  }
+  if (entry && typeof entry === "object") {
+    return "(an entry with no note text)";
+  }
+  return "(an empty entry)";
+}
+
+/* v2.218: a drop box entry's first words, for the
+   Settings tab's waiting list: the note text with its
+   front matter and markup set aside, flattened to one
+   line and cut short. */
+function dropboxEntrySnippet(entry) {
+  const text = dropboxEntryText(entry);
+  if (!text) { return ""; }
+  const body = text.replace(/^---\n[\s\S]*?\n---\n?/, "");
+  const holder = document.createElement("div");
+  holder.innerHTML = body;
+  return (holder.textContent || "")
+    .replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+/* v2.218: read the drop box history. A missing file is
+   an empty history, and a malformed one is treated as
+   empty too (the file is the app's own, born with
+   this build; the tab's answer matters more than the
+   archaeology). Never throws; the token rides along
+   for the writer's merge. */
+async function readDropboxHistory() {
+  try {
+    const file = await storeGetFile(DROPBOX_HISTORY_FILE);
+    if (!file) { return { records: [], token: null }; }
+    let parsed = null;
+    try { parsed = JSON.parse(file.text); } catch (err) {
+      parsed = null;
+    }
+    if (!parsed || !Array.isArray(parsed.records)) {
+      return { records: [], token: file.token };
+    }
+    return { records: parsed.records.slice(),
+      token: file.token };
+  } catch (err) {
+    return { records: [], token: null };
+  }
+}
+
+/* v2.218: append one drain's outcomes to the history.
+   Fresh-read-merge, like the box's own cleanup: read,
+   append, cut to the cap, write against the fresh
+   token, and once on a conflict read and merge again.
+   A passenger on the import: any failure is logged
+   and swallowed, so a history that cannot be written
+   leaves the import's own outcome exactly as it was,
+   just unrecorded. */
+async function recordDropboxHistory(newRecords) {
+  if (!newRecords || !newRecords.length) { return; }
+  const stamped = newRecords.map(function (r) {
+    return { at: new Date().toISOString(),
+      outcome: r.outcome, title: r.title || "",
+      detail: r.detail || "" };
+  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const cur = await readDropboxHistory();
+      const merged = cur.records.concat(stamped)
+        .slice(-DROPBOX_HISTORY_CAP);
+      await storePutFile(DROPBOX_HISTORY_FILE,
+        JSON.stringify({ records: merged }, null, 2),
+        cur.token, "Record drop box history",
+        cur.token ? {} : { fresh: true });
+      return;
+    } catch (err) {
+      if (isStoreConflict(err) && attempt === 0) {
+        continue;
+      }
+      console.warn("Drop box history was not recorded: " +
+        (err && err.message ? err.message : err));
+      return;
+    }
+  }
+}
+
+/* v2.218: remove exactly one waiting entry from the
+   drop box, for the Settings Dropbox tab. The box is
+   a shared surface (outside writers append to it,
+   the drain subtracts from it), so the removal works
+   like the drain's own cleanup: read fresh, take out
+   the one entry the key names (one occurrence), write
+   the whole box back against the fresh token with
+   both arrays standing, and read again to prove the
+   entry went and the rejected array never moved. A
+   conflict earns one fresh retry. Answers a status
+   object and never throws: "deleted" (with the
+   entry's label), "gone" (the entry is no longer
+   waiting, said plainly), "malformed" (the box is not
+   in its standing shape, so nothing was touched), or
+   "failed". */
+async function deleteDropboxPending(key) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let file = null;
+    try {
+      file = await storeGetFile(INCOMING_FILE);
+    } catch (err) { return { status: "failed" }; }
+    if (!file) { return { status: "gone" }; }
+    let parsed = null;
+    try { parsed = JSON.parse(file.text); } catch (err) {
+      parsed = null;
+    }
+    if (!parsed || !Array.isArray(parsed.notes) ||
+        !Array.isArray(parsed.rejected)) {
+      return { status: "malformed" };
+    }
+    let idx = -1;
+    for (let i = 0; i < parsed.notes.length; i++) {
+      if (dropboxEntryKey(parsed.notes[i]) === key) {
+        idx = i; break;
+      }
+    }
+    if (idx < 0) { return { status: "gone" }; }
+    const removed = parsed.notes[idx];
+    const keyCount = function (list) {
+      return list.filter(function (e) {
+        return dropboxEntryKey(e) === key;
+      }).length;
+    };
+    const beforeCount = keyCount(parsed.notes);
+    const rejectedBefore = JSON.stringify(parsed.rejected);
+    const remaining = parsed.notes.slice();
+    remaining.splice(idx, 1);
+    try {
+      await storePutFile(INCOMING_FILE,
+        JSON.stringify({ notes: remaining,
+          rejected: parsed.rejected }, null, 2),
+        file.token, "Remove drop box entry");
+    } catch (err) {
+      if (isStoreConflict(err) && attempt === 0) {
+        continue;
+      }
+      return { status: "failed" };
+    }
+    /* The proof read: the box parses, both arrays
+       stand, the key's count fell by the one
+       occurrence, and the rejected array is identical
+       to what stood before. Entries appended
+       concurrently are welcome to stand; they were
+       never this delete's business. */
+    try {
+      const checkFile = await storeGetFile(INCOMING_FILE);
+      if (!checkFile) { return { status: "failed" }; }
+      const cp = JSON.parse(checkFile.text);
+      if (!cp || !Array.isArray(cp.notes) ||
+          !Array.isArray(cp.rejected)) {
+        return { status: "failed" };
+      }
+      if (keyCount(cp.notes) !== beforeCount - 1 ||
+          JSON.stringify(cp.rejected) !== rejectedBefore) {
+        return { status: "failed" };
+      }
+    } catch (err) { return { status: "failed" }; }
+    return { status: "deleted",
+      label: dropboxEntryLabel(removed) };
+  }
+  return { status: "failed" };
+}
+
 /* Base64 to bytes for a carried attachment. Whitespace in the
    payload (line wraps from a mail or JSON writer) is ignored.
    Returns null on undecodable input; the caller counts the
@@ -2241,6 +2452,9 @@ async function processIncomingBox() {
   if (!state.notebooks.length) { await createNotebook("Personal"); }
   let imported = 0;
   let duplicates = 0;
+  /* v2.218: this drain's outcomes, in the order they
+     were judged, for the drop box history. */
+  const outcomes = [];
   let strippedNotes = 0;
   let fallbackName = null;
   /* v2.23: the attachment tallies for the report. */
@@ -2290,14 +2504,24 @@ async function processIncomingBox() {
         entry: rejectedEntry,
         error: "The entry is not note file text."
       });
+      /* v2.218: the rejection joins the history with
+         its reason. */
+      outcomes.push({ outcome: "rejected",
+        title: dropboxEntryLabel(rejectedEntry),
+        detail: "The entry is not note file text." });
       removalKeys.push(dropboxEntryKey(rawEntry));
       continue;
     }
     const parsed = parseNoteFile(entryText, null, newNoteId(), false, false);
-    if (findNoteById(parsed.id)) {
+    const existingNote = findNoteById(parsed.id);
+    if (existingNote) {
       /* The duplicate skip runs before any attachment work, so
          a reprocessed entry never uploads (and orphans) files. */
       duplicates++;
+      /* v2.218: the history names the note it duplicates. */
+      outcomes.push({ outcome: "duplicate",
+        title: parsed.title || dropboxEntryLabel(rawEntry),
+        detail: existingNote.title || "" });
       removalKeys.push(dropboxEntryKey(rawEntry));
       continue;
     }
@@ -2448,6 +2672,11 @@ async function processIncomingBox() {
     try {
       await saveNoteToRepo(parsed, { skipConflictCheck: true, fresh: true });
       imported++;
+      /* v2.218: the history carries the created
+         note's title. */
+      outcomes.push({ outcome: "imported",
+        title: parsed.title || dropboxEntryLabel(rawEntry),
+        detail: "" });
       batch.push(parsed);
       removalKeys.push(dropboxEntryKey(rawEntry));
     } catch (err) {
@@ -2455,6 +2684,11 @@ async function processIncomingBox() {
         return n.id !== parsed.id;
       });
       failed.push({ entry: rejectedEntry, error: err.message });
+      /* v2.218: a save that failed is a rejection in
+         the history too, with its reason. */
+      outcomes.push({ outcome: "rejected",
+        title: parsed.title || dropboxEntryLabel(rejectedEntry),
+        detail: err.message || "" });
       removalKeys.push(dropboxEntryKey(rawEntry));
     }
   }
@@ -2509,6 +2743,15 @@ async function processIncomingBox() {
       }
     }
   } catch (err) { /* left for the next sync, by design */ }
+  /* v2.218: the drain's outcomes join the drop box
+     history the Settings Dropbox tab reads. The
+     recording is a passenger (see
+     recordDropboxHistory): it cannot fail this drain
+     or change its report, and a failed write leaves
+     the import exactly as it was, just unrecorded. */
+  if (outcomes.length) {
+    await recordDropboxHistory(outcomes);
+  }
   if (imported > 0) { saveCache(); }
   const total = imported + duplicates + failed.length;
   if (total > 0) {

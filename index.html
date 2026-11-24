@@ -7699,6 +7699,7 @@
       <button class="settings-tab" id="settingsTabEditor" type="button" role="tab" data-settings-tab="editor" aria-controls="settingsPanelEditor" aria-selected="false" tabindex="-1">Editor</button>
       <button class="settings-tab" id="settingsTabHistory" type="button" role="tab" data-settings-tab="history" aria-controls="settingsPanelHistory" aria-selected="false" tabindex="-1">History</button>
       <button class="settings-tab" id="settingsTabWebClip" type="button" role="tab" data-settings-tab="webclip" aria-controls="settingsPanelWebClip" aria-selected="false" tabindex="-1">Web clipper</button>
+      <button class="settings-tab" id="settingsTabDropbox" type="button" role="tab" data-settings-tab="dropbox" aria-controls="settingsPanelDropbox" aria-selected="false" tabindex="-1">Dropbox</button>
       <button class="settings-tab" id="settingsTabStart" type="button" role="tab" data-settings-tab="start" aria-controls="settingsPanelStart" aria-selected="false" tabindex="-1">Getting started</button>
     </div>
 
@@ -7953,6 +7954,31 @@
           <button class="btn" id="webClipExtCopyBtn" type="button">Copy token</button>
         </div>
         <div class="settings-help">Paste it into the extension's options page (right-click the extension's toolbar button, then Options). Anyone holding this token can add clips to your notes, so keep it to yourself; revoke it here if that ever changes.</div>
+      </div>
+    </section>
+
+    <!-- v2.218: the Dropbox section: what is waiting in
+         the drop box, what stands rejected in it, and the
+         recent history of what came through it, filled by
+         renderDropboxSettings on every Settings open and
+         every showing of the tab. The box stands empty
+         most of the time; the history is what answers on
+         a quiet day. -->
+    <section class="settings-section hidden" id="settingsPanelDropbox" role="tabpanel" data-settings-panel="dropbox" aria-labelledby="settingsDropboxTitle">
+      <h3 id="settingsDropboxTitle">Dropbox</h3>
+      <p>Notes and clips filed from outside the app wait in the drop box for the next sync to bring them in. What is waiting stands below, and a waiting entry can be removed here instead of being imported.</p>
+      <div class="field">
+        <label>Waiting to be imported</label>
+        <div id="settingsDropboxPending"></div>
+      </div>
+      <div class="field">
+        <label>Standing rejected</label>
+        <div id="settingsDropboxRejected"></div>
+      </div>
+      <div class="field">
+        <label>Recent history</label>
+        <div id="settingsDropboxHistory"></div>
+        <div class="settings-feedback" id="settingsDropboxFeedback" aria-live="polite"></div>
       </div>
     </section>
 
