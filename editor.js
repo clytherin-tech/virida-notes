@@ -5114,7 +5114,20 @@ function updateTableMenu() {
   const note = currentNote();
   const editable = !!note && !note.trashed && !note.archived &&
     bodyEl.contentEditable !== "false";
-  const cell = editable ? tableCellFromNode(anchor) : null;
+  let cell = editable ? tableCellFromNode(anchor) : null;
+  if (!cell && editable) {
+    /* v2.212: a standing multi-cell range keeps the button
+       even when the DOM selection no longer names a caret
+       cell. A cell drag and a strip press both clear the
+       DOM ranges as they paint the range, so judging by
+       the caret alone hid the button exactly when a
+       selection stood to be formatted. The button then
+       tracks the range's table, its cell below lands on
+       the range's first cell, and openTableMenu captures
+       the standing range as its cell section target. */
+    const range = currentRangeCells();
+    if (range) { cell = range[0]; }
+  }
   if (!cell) { hideTableMenu(); return; }
   tableMenuCell = cell;
   tableMenuTable = cell.closest("table");

@@ -3192,9 +3192,16 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
    inset box-shadow ring and never the background-color property,
    because cell backgrounds are a user formatting feature of their
    own (see the cell menu). Runtime only: canonicalization strips
-   this class, so it is never saved. */
-#noteBody table.ss-table th.ss-cell-selected,
-#noteBody table.ss-table td.ss-cell-selected{
+   this class, so it is never saved.
+   v2.212: the rule is no longer scoped to table.ss-table. The
+   selection code paints ss-cell-selected on the cells of any
+   table in the body, but through v2.211 the paint stood only
+   where the table carried the class the Insert menu's tables
+   are born with, so on every other table (older notes,
+   imports, conversions, pasted tables) a selection happened
+   invisibly. The ring now paints under any table. */
+#noteBody table th.ss-cell-selected,
+#noteBody table td.ss-cell-selected{
   box-shadow:inset 0 0 0 2px var(--accent);
 }
 /* v2.3: the filter chip, position:fixed and OUTSIDE #noteBody
