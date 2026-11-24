@@ -2687,6 +2687,20 @@ function wireEvents() {
       linkBarImdbPosterEl.removeAttribute("src");
     });
   }
+  /* v2.214: the IMDb card's trailer button: it
+     plays the trailer the standing card is
+     showing (the id the Director line's fill
+     remembered) in the lightbox. */
+  const linkBarImdbTrailerBtnEl =
+    document.getElementById("linkBarImdbTrailerBtn");
+  if (linkBarImdbTrailerBtnEl) {
+    linkBarImdbTrailerBtnEl.addEventListener("click",
+      function () {
+        if (linkBarTrailerId) {
+          openTrailerLightbox(linkBarTrailerId);
+        }
+      });
+  }
   document.getElementById("linkBarUrl").addEventListener("click", function (ev) {
     ev.preventDefault();
     /* v2.10: for a note link the label is the target's title

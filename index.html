@@ -6931,7 +6931,14 @@
                    and the director, each standing only
                    when the preview data carries it. -->
               <div id="linkBarImdbCast" class="link-bar-imdb-line hidden"></div>
-              <div id="linkBarImdbDirector" class="link-bar-imdb-line hidden"></div>
+              <!-- v2.214: the Director line carries the
+                   trailer button at its right end: the
+                   text lives in its own span (the fill
+                   writes there), and the small soft
+                   green clapperboard button stands in
+                   the line, shown only when the title
+                   has a trailer. -->
+              <div id="linkBarImdbDirector" class="link-bar-imdb-line hidden"><span id="linkBarImdbDirectorText"></span><button id="linkBarImdbTrailerBtn" class="link-bar-imdb-trailer hidden" type="button" title="Watch trailer" aria-label="Watch trailer"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3Z"/><path d="m6.2 5.3 3.1 3.9"/><path d="m12.4 3.4 3.1 4"/><path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></button></div>
             </div>
           </div>
           <!-- v2.10: the View Link As menu is the link bar's
@@ -7123,6 +7130,12 @@
                click, the close button, or Escape. -->
           <div id="imgLightbox" class="hidden" role="dialog" aria-label="Image preview">
             <img id="imgLightboxImg" alt="">
+            <!-- v2.214: the lightbox's video face: the
+                 IMDb card's trailer button fills this
+                 frame with the title's YouTube embed;
+                 the standing close clears its address,
+                 which stops the video. -->
+            <div id="imgLightboxVideo" class="hidden"><iframe id="imgLightboxFrame" title="Trailer" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>
             <button id="imgLightboxClose" type="button" aria-label="Close preview">&times;</button>
           </div>
 

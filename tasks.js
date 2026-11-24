@@ -673,6 +673,15 @@ function sanitizeImdbPreviews(parsed) {
         !!raw.director.trim()) {
       entry.director = raw.director.trim();
     }
+    /* v2.214: the file's trailer rides along the
+       same way: a YouTube video id in its exact
+       shape (eleven word or dash characters), or
+       nothing. Anything else is dropped, never
+       repaired, like the people above. */
+    if (typeof raw.trailer === "string" &&
+        /^[A-Za-z0-9_-]{11}$/.test(raw.trailer)) {
+      entry.trailer = raw.trailer;
+    }
     out[key] = entry;
   });
   return out;
@@ -716,8 +725,15 @@ function sanitizeImdbFetched(parsed) {
     const description = typeof raw.description === "string"
       ? raw.description : "";
     if (!posterUrl && !description) { return; }
-    out[key] = { title: title, posterUrl: posterUrl,
+    const rec = { title: title, posterUrl: posterUrl,
       description: description, at: at };
+    /* v2.214: a cached trailer stands or falls by
+       the same strict shape as the file's. */
+    if (typeof raw.trailer === "string" &&
+        /^[A-Za-z0-9_-]{11}$/.test(raw.trailer)) {
+      rec.trailer = raw.trailer;
+    }
+    out[key] = rec;
   });
   return out;
 }
@@ -746,7 +762,8 @@ function imdbFetchedHit(ttId) {
   if (!rec || rec.miss) { return null; }
   return { title: rec.title || "",
     posterUrl: rec.posterUrl || "",
-    description: rec.description || "" };
+    description: rec.description || "",
+    trailer: rec.trailer || "" };
 }
 
 function imdbFetchedMissFresh(ttId) {
@@ -796,7 +813,13 @@ const imdbFetchFlights = Object.create(null);
    summary) as a miss. A request that never landed
    caches nothing, so a later hover may retry it.
    Resolves to {title, posterUrl, description} or
-   null, never rejects. */
+   null, never rejects.
+   v2.214: the same query also asks the item for
+   its YouTube video id (P1651), the property
+   where Wikidata carries a film's trailer; a
+   well shaped one rides the entry and the cache
+   record as "trailer", and an item with none
+   simply answers without one. */
 function fetchImdbReference(ttId) {
   if (!ttId) { return Promise.resolve(null); }
   if (imdbFetchFlights[ttId]) {
@@ -804,11 +827,12 @@ function fetchImdbReference(ttId) {
   }
   const flight = (async function () {
     try {
-      const query = "SELECT ?article WHERE {" +
+      const query = "SELECT ?article ?yt WHERE {" +
         " ?item wdt:P345 \"" + ttId + "\"." +
+        " OPTIONAL { ?item wdt:P1651 ?yt. }" +
         " ?article schema:about ?item;" +
         " schema:isPartOf <https://en.wikipedia.org/>." +
-        " } LIMIT 1";
+        " } LIMIT 5";
       const sparql = await imdbFetchJson(
         "https://query.wikidata.org/sparql?query=" +
         encodeURIComponent(query) + "&format=json");
@@ -823,6 +847,19 @@ function fetchImdbReference(ttId) {
           .indexOf("/wiki/");
         if (at >= 0) {
           slug = bindings[0].article.value.slice(at + 6);
+        }
+      }
+      /* v2.214: the trailer the same answer carries:
+         the first well shaped YouTube id among the
+         rows, or none. */
+      let trailer = "";
+      for (let bi = 0; bi < bindings.length; bi++) {
+        const yv = bindings[bi].yt &&
+          bindings[bi].yt.value;
+        if (typeof yv === "string" &&
+            /^[A-Za-z0-9_-]{11}$/.test(yv)) {
+          trailer = yv;
+          break;
         }
       }
       if (!slug) {
@@ -857,7 +894,8 @@ function fetchImdbReference(ttId) {
             s.thumbnail.source) || "",
         description: (typeof s.extract === "string"
           ? s.extract.trim() : "")
-          .slice(0, IMDB_FETCH_DESC_CAP)
+          .slice(0, IMDB_FETCH_DESC_CAP),
+        trailer: trailer
       };
       if (!entry.posterUrl && !entry.description) {
         imdbFetchedById[ttId] = { miss: true,
@@ -865,9 +903,11 @@ function fetchImdbReference(ttId) {
         saveImdbFetchedDeviceCache();
         return null;
       }
-      imdbFetchedById[ttId] = { title: entry.title,
+      const hitRec = { title: entry.title,
         posterUrl: entry.posterUrl,
         description: entry.description, at: Date.now() };
+      if (entry.trailer) { hitRec.trailer = entry.trailer; }
+      imdbFetchedById[ttId] = hitRec;
       saveImdbFetchedDeviceCache();
       return entry;
     } catch (e) { return null; }
@@ -893,7 +933,9 @@ async function resolveImdbPreview(ttId) {
       posterUrl: file.posterUrl || "",
       description: file.description || "",
       actors: file.actors || null,
-      director: file.director || "" };
+      director: file.director || "",
+      trailer: file.trailer ||
+        (hit ? hit.trailer : "") || "" };
   }
   if (hit) { return hit; }
   if (imdbFetchedMissFresh(ttId)) { return null; }
@@ -984,7 +1026,8 @@ function imdbPreviewEntry(ttId) {
   const hit = imdbFetchedHit(ttId);
   if (!hit) { return null; }
   return { posterUrl: hit.posterUrl,
-    description: hit.description };
+    description: hit.description,
+    trailer: hit.trailer || "" };
 }
 
 /* Sign out drops the previews session state with the

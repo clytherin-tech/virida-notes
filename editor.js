@@ -1287,14 +1287,79 @@ function fillImdbPreviewLine(el, label, text) {
   el.classList.remove("hidden");
 }
 
+/* v2.214: the trailer the bar's standing card can
+   play: the YouTube video id of the entry the card
+   is showing, or "" while it shows none. Written
+   by the Director line's fill at every repaint and
+   read by the trailer button's click (wired in
+   app.js beside the poster's error wiring). */
+let linkBarTrailerId = "";
+
+/* v2.214: the Director line's own fill. The line
+   carries the trailer button at its right end (the
+   button stands in the markup, inside the line), so
+   the line's text lives in its own span and this
+   fill never rebuilds the line itself: it writes
+   the label and the name into the span, stands the
+   button when the entry carries a trailer (and
+   remembers the id for the button's click), and
+   stands the line when either the name or the
+   trailer does. An entry with neither leaves the
+   line hidden and emptied, exactly the pre v2.214
+   absence; an entry with a trailer and no director
+   stands the line for the button alone, the text
+   span empty. */
+function fillImdbDirectorLine(entry) {
+  const line = document.getElementById(
+    "linkBarImdbDirector");
+  const textEl = document.getElementById(
+    "linkBarImdbDirectorText");
+  const btn = document.getElementById(
+    "linkBarImdbTrailerBtn");
+  const director = entry ? (entry.director || "") : "";
+  linkBarTrailerId = entry ? (entry.trailer || "") : "";
+  if (textEl) {
+    textEl.textContent = "";
+    if (director) {
+      const lab = document.createElement("span");
+      lab.className = "link-bar-imdb-label";
+      lab.textContent = "Director: ";
+      textEl.appendChild(lab);
+      textEl.appendChild(
+        document.createTextNode(director));
+    }
+  }
+  if (btn) {
+    if (linkBarTrailerId) {
+      btn.classList.remove("hidden");
+    } else {
+      btn.classList.add("hidden");
+    }
+  }
+  if (!line) { return; }
+  /* The button rides the line absolutely (see
+     styles.css), so the line's classes carry the
+     two things its style must know: that a
+     trailer stands (the text pads to make room),
+     and that it stands alone (the line takes the
+     button's height, having no text of its own). */
+  line.classList.toggle("has-trailer",
+    !!linkBarTrailerId);
+  line.classList.toggle("trailer-only",
+    !!linkBarTrailerId && !director);
+  if (director || linkBarTrailerId) {
+    line.classList.remove("hidden");
+  } else {
+    line.classList.add("hidden");
+  }
+}
+
 function refreshLinkBarImdbPreview(anchor) {
   const block = document.getElementById("linkBarImdbPreview");
   if (!block) { return; }
   const img = document.getElementById("linkBarImdbPoster");
   const desc = document.getElementById("linkBarImdbDesc");
   const cast = document.getElementById("linkBarImdbCast");
-  const directorEl = document.getElementById(
-    "linkBarImdbDirector");
   const href = anchor
     ? (anchor.getAttribute("href") || anchor.href || "")
     : "";
@@ -1309,7 +1374,7 @@ function refreshLinkBarImdbPreview(anchor) {
     }
     if (desc) { desc.textContent = ""; }
     fillImdbPreviewLine(cast, "Starring: ", "");
-    fillImdbPreviewLine(directorEl, "Director: ", "");
+    fillImdbDirectorLine(null);
     if (ttId && !linkBarEditing) {
       maybeFetchImdbPreviewForBar(ttId);
     }
@@ -1322,8 +1387,7 @@ function refreshLinkBarImdbPreview(anchor) {
   fillImdbPreviewLine(cast, "Starring: ",
     (entry.actors && entry.actors.length)
       ? entry.actors.join(", ") : "");
-  fillImdbPreviewLine(directorEl, "Director: ",
-    entry.director || "");
+  fillImdbDirectorLine(entry);
   if (img) {
     if (entry.posterUrl) {
       img.classList.remove("hidden");

@@ -9601,6 +9601,14 @@ function openExternalImageLightbox(el) {
   const box = document.getElementById("imgLightbox");
   const img = document.getElementById("imgLightboxImg");
   if (!box || !img || !el) { return; }
+  /* v2.214: the video face resets here too. */
+  const vidWrapE = document.getElementById(
+    "imgLightboxVideo");
+  if (vidWrapE) { vidWrapE.classList.add("hidden"); }
+  const frameE = document.getElementById(
+    "imgLightboxFrame");
+  if (frameE) { frameE.removeAttribute("src"); }
+  img.classList.remove("hidden");
   img.src = externalImageSrcOf(el);
   img.alt = el.getAttribute("data-ss-ext-alt") ||
     externalImageSrcOf(el);
@@ -11249,6 +11257,15 @@ async function openImageLightbox(note, att, el) {
   const box = document.getElementById("imgLightbox");
   const img = document.getElementById("imgLightboxImg");
   if (!box || !img) { return; }
+  /* v2.214: the image face resets the video face,
+     the mirror of the trailer opener's reset. */
+  const vidWrapO = document.getElementById(
+    "imgLightboxVideo");
+  if (vidWrapO) { vidWrapO.classList.add("hidden"); }
+  const frameO = document.getElementById(
+    "imgLightboxFrame");
+  if (frameO) { frameO.removeAttribute("src"); }
+  img.classList.remove("hidden");
   const liveImg = el ? el.querySelector("img.ss-att-img") : null;
   const liveSrc = liveImg && liveImg.src &&
     liveImg.src.indexOf("blob:") === 0 ? liveImg.src : null;
@@ -11274,10 +11291,50 @@ function closeImageLightbox() {
   if (box) { box.classList.add("hidden"); }
   const img = document.getElementById("imgLightboxImg");
   if (img) { img.removeAttribute("src"); }
+  /* v2.214: the video face resets with the image:
+     clearing the frame's address is what stops a
+     playing trailer, and every close path (the
+     button, the backdrop, Escape) lands here. */
+  const vidWrap = document.getElementById(
+    "imgLightboxVideo");
+  if (vidWrap) { vidWrap.classList.add("hidden"); }
+  const frame = document.getElementById(
+    "imgLightboxFrame");
+  if (frame) { frame.removeAttribute("src"); }
+  if (img) { img.classList.remove("hidden"); }
   if (lightboxOwnUrl) {
     URL.revokeObjectURL(lightboxOwnUrl);
     lightboxOwnUrl = null;
   }
+}
+
+/* v2.214: the same lightbox wearing a video: the
+   IMDb card's trailer button names a YouTube
+   video id (its strict shape judged here again,
+   so no caller can frame an arbitrary address),
+   the embed fills the frame, the image steps
+   aside, and the box stands. Closing is the
+   standing closeImageLightbox, whose frame clear
+   stops the video. */
+function openTrailerLightbox(trailerId) {
+  const box = document.getElementById("imgLightbox");
+  const img = document.getElementById("imgLightboxImg");
+  const vidWrap = document.getElementById(
+    "imgLightboxVideo");
+  const frame = document.getElementById(
+    "imgLightboxFrame");
+  if (!box || !vidWrap || !frame) { return; }
+  if (!/^[A-Za-z0-9_-]{11}$/.test(trailerId || "")) {
+    return;
+  }
+  if (img) {
+    img.classList.add("hidden");
+    img.removeAttribute("src");
+  }
+  frame.src = "https://www.youtube-nocookie.com/embed/" +
+    trailerId + "?autoplay=1&rel=0";
+  vidWrap.classList.remove("hidden");
+  box.classList.remove("hidden");
 }
 
 function imageLightboxOpen() {
