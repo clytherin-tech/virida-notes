@@ -5245,6 +5245,7 @@ function positionTableMenuBtn() {
 /* Close just the menu popup (the button stays while the caret is in
    the table), mirroring how the image menu closes on its own. */
 function closeTableMenu() {
+  closeTableSubmenus();
   const menu = document.getElementById("tableMenu");
   if (menu) { menu.classList.add("hidden"); }
   const btn = document.getElementById("tableMenuBtn");
@@ -5959,9 +5960,10 @@ function hideTableSelectStrips() {
    its spreadsheet letter (a press selects the column, a
    drag reorders it), one per visible row parked at its
    left, labeled with its body row number (a press selects
-   the row, a drag reorders it), and an Add row bar under
-   each table. Zero height rows (a filter hides them) get
-   no segment: they have no row on screen to select. */
+   the row, a drag reorders it). v2.216 removes the Add
+   row bar that stood under the table through v2.215.
+   Zero height rows (a filter hides them) get no segment:
+   they have no row on screen to select. */
 function buildActiveTableStrips(table) {
   const layer = document.getElementById("tableSelectStrips");
   if (!layer || !table) { return; }
@@ -5991,7 +5993,6 @@ function buildActiveTableStrips(table) {
         inHeader ? "" : String(bodyNo));
     }
   });
-  addSeg("add", {}, "+ Add row", "ss-tsel-add");
   /* The reorder indicator line rides in the same layer,
      hidden until a strip drag is under way. */
   const line = document.createElement("div");
@@ -6008,8 +6009,56 @@ function tableStripsSignature(table) {
     table.rows.length;
 }
 
-/* (Re)park every segment and Add row bar from live
-   geometry. */
+/* v2.216: the editor scroll container's rect, the one
+   area a selector segment may ever occupy. The strips are
+   position:fixed, so without this they painted over the
+   formatting toolbar above the note and over the tags bar
+   and tags edit box below it whenever the tracked table
+   stood near either edge (Chris's field report,
+   2026-11-24). */
+function tableStripClipRect() {
+  const scroller = document.querySelector(
+    "#editorWrap .editor-scroll");
+  if (!scroller) { return null; }
+  const rect = scroller.getBoundingClientRect();
+  /* A zero sized rect names no standing editor area (a
+     hidden wrap, or a harness with no layout): there is
+     no area to clip against, so the natural rect stands. */
+  return rect.width > 0 && rect.height > 0 ? rect : null;
+}
+
+/* The intersection of one segment's natural rect with the
+   editor's rect, or null when no part of the segment may
+   stand. Parking a segment at exactly this intersection
+   (never its natural rect) is what enforces the rule at
+   rest, on scroll, and through resize drags alike: the
+   element's own box is the clipped box, so a press can
+   only ever land on the part inside the editor. */
+function clippedTableStripRect(left, top, width, height) {
+  const clip = tableStripClipRect();
+  if (!clip) {
+    return { left: left, top: top, width: width, height: height };
+  }
+  const right = Math.min(left + width, clip.right);
+  const bottom = Math.min(top + height, clip.bottom);
+  const cl = Math.max(left, clip.left);
+  const ct = Math.max(top, clip.top);
+  if (right <= cl || bottom <= ct) { return null; }
+  return { left: cl, top: ct, width: right - cl,
+    height: bottom - ct };
+}
+
+function parkStripSegment(el, rect) {
+  if (!rect) { el.style.display = "none"; return; }
+  el.style.display = "";
+  el.style.left = rect.left + "px";
+  el.style.top = rect.top + "px";
+  el.style.width = rect.width + "px";
+  el.style.height = rect.height + "px";
+}
+
+/* (Re)park every segment from live geometry, each clipped
+   to the editor's own area (v2.216). */
 function positionAllTableStrips() {
   const layer = document.getElementById("tableSelectStrips");
   if (!layer) { return; }
@@ -6036,20 +6085,15 @@ function positionAllTableStrips() {
     if (spec.kind === "col") {
       const bounds = boundsFor(table);
       if (!bounds) { el.style.display = "none"; return; }
-      el.style.left = bounds[spec.index] + "px";
-      el.style.top = Math.max(0, rect.top - 19) + "px";
-      el.style.width = Math.max(14,
-        bounds[spec.index + 1] - bounds[spec.index] - 2) + "px";
-      el.style.height = "17px";
+      parkStripSegment(el, clippedTableStripRect(
+        bounds[spec.index], Math.max(0, rect.top - 19),
+        Math.max(14,
+          bounds[spec.index + 1] - bounds[spec.index] - 2), 17));
     } else if (spec.kind === "row" && spec.rowEl) {
       const r = spec.rowEl.getBoundingClientRect();
-      el.style.left = Math.max(0, rect.left - 26) + "px";
-      el.style.top = r.top + "px";
-      el.style.width = "24px";
-      el.style.height = Math.max(14, r.height - 2) + "px";
-    } else if (spec.kind === "add") {
-      el.style.left = rect.left + "px";
-      el.style.top = (rect.bottom + 6) + "px";
+      parkStripSegment(el, clippedTableStripRect(
+        Math.max(0, rect.left - 26), r.top, 24,
+        Math.max(14, r.height - 2)));
     }
   });
 }
@@ -6239,22 +6283,6 @@ function selectTableSlice(anchorCell, focusCell) {
   paintCellSelection();
 }
 
-/* Append one empty row at the table's end, in the last row's
-   own section with cells of its shape, and land the caret in
-   its first cell: the preview's Add row bar. */
-function addRowToTableEnd(table) {
-  if (!table || !table.rows.length) { return; }
-  const last = table.rows[table.rows.length - 1];
-  const newRow = document.createElement("tr");
-  for (let i = 0; i < last.cells.length; i++) {
-    newRow.appendChild(emptyTableCell(tableCellTagFor(last, i)));
-  }
-  last.parentElement.appendChild(newRow);
-  if (newRow.cells[0]) { placeCaretIn(newRow.cells[0], 0); }
-  markDirty();
-  updateCellMenu();
-}
-
 /* ----- the chip and the merged menu's cell section ----- */
 
 
@@ -6390,12 +6418,137 @@ function syncCellMenuState() {
   CELL_SUB_IDS.forEach(function (id) {
     document.getElementById(id).classList.add("hidden");
   });
+  closeTableSubmenus();
 }
 
 
+/* ----- v2.216: the Table menu's fly-outs -----
+   The Add actions, the cell background choices, and the
+   Borders group (Border style, Border width, Reset style)
+   live in fixed fly-out cards beside the Table menu
+   instead of expanding inside it, so the menu itself
+   stays short (Chris's round 5 ruling, 2026-11-24). The
+   mechanics follow the Insert menu's sub-menus: one open
+   at a time, placement from the parent menu's edge at
+   open time, a flip to the menu's left near the screen's
+   right edge, a shift up near its bottom, and a short
+   close grace so the trip from a row onto its panel can
+   land. Opening is idempotent, never a toggle, so a tap
+   that follows the hover it synthesized cannot open and
+   shut in one gesture. Every parent close (closeTableMenu)
+   and every state sync puts them all away, and a scroll
+   of the parent menu puts an open one away too, since a
+   fixed panel cannot follow a scrolling row. */
+const TABLE_SUBMENU_CLOSE_GRACE_MS = 300;
+let tableSubmenuCloseTimer = null;
+
+function cancelTableSubmenuClose() {
+  if (tableSubmenuCloseTimer !== null) {
+    clearTimeout(tableSubmenuCloseTimer);
+    tableSubmenuCloseTimer = null;
+  }
+}
+
+function tableSubmenuButton(panel) {
+  const wrap = panel ? panel.closest(".table-submenu-wrap")
+    : null;
+  return wrap ? wrap.querySelector(
+    "[data-table-submenu], [data-cell-menu]") : null;
+}
+
+function closeTableSubmenus(except) {
+  cancelTableSubmenuClose();
+  document.querySelectorAll("#tableMenu .table-submenu")
+    .forEach(function (panel) {
+      if (panel !== except) { panel.classList.add("hidden"); }
+      const btn = tableSubmenuButton(panel);
+      if (btn && panel !== except) {
+        btn.setAttribute("aria-expanded", "false");
+      }
+    });
+}
+
+function scheduleTableSubmenuClose(panel) {
+  cancelTableSubmenuClose();
+  tableSubmenuCloseTimer = setTimeout(function () {
+    tableSubmenuCloseTimer = null;
+    panel.classList.add("hidden");
+    const btn = tableSubmenuButton(panel);
+    if (btn) { btn.setAttribute("aria-expanded", "false"); }
+  }, TABLE_SUBMENU_CLOSE_GRACE_MS);
+}
+
+/* Stand one fly-out beside the Table menu at the height of
+   the row that opened it: 4px of overlap onto the menu's
+   edge (the Insert gap hotfix's lesson: a clear gap is dead
+   ground the pointer must cross), flipped to the menu's
+   left when it would run off the screen's right edge, and
+   shifted up when it would run off the bottom. */
+function placeTableSubmenu(panel) {
+  const menu = document.getElementById("tableMenu");
+  const btn = tableSubmenuButton(panel);
+  if (!menu || !btn) { return; }
+  const edge = menu.getBoundingClientRect();
+  const row = btn.getBoundingClientRect();
+  let left = Math.round(edge.right - 4);
+  let top = Math.round(row.top - 7);
+  panel.style.left = left + "px";
+  panel.style.top = top + "px";
+  const rect = panel.getBoundingClientRect();
+  if (rect.right > window.innerWidth - 8) {
+    left = Math.round(edge.left - rect.width + 4);
+    if (left < 8) {
+      left = Math.max(8,
+        Math.round(window.innerWidth - rect.width - 8));
+    }
+    panel.style.left = left + "px";
+  }
+  if (rect.bottom > window.innerHeight - 8) {
+    top = Math.max(8,
+      Math.round(window.innerHeight - rect.height - 8));
+    panel.style.top = top + "px";
+  }
+  if (top < 8) { panel.style.top = "8px"; }
+}
+
+function openTableSubmenu(panel) {
+  if (!panel) { return; }
+  closeTableSubmenus(panel);
+  CELL_SUB_IDS.forEach(function (id) {
+    const sub = document.getElementById(id);
+    if (sub && sub !== panel) { sub.classList.add("hidden"); }
+  });
+  panel.classList.remove("hidden");
+  const btn = tableSubmenuButton(panel);
+  if (btn) { btn.setAttribute("aria-expanded", "true"); }
+  placeTableSubmenu(panel);
+}
+
 /* Show one sub panel and close the others, then reposition: the
-   menu's height changed under the Table button. */
+   menu's height changed under the Table button. The cell
+   background panel is a fly-out now (v2.216), so its toggle
+   routes there; the rest still expand inline. */
 function toggleCellSub(subId) {
+  if (subId === "cellBgSub") {
+    const panel = document.getElementById(subId);
+    const willShow = panel.classList.contains("hidden");
+    CELL_SUB_IDS.forEach(function (id) {
+      if (id !== subId) {
+        document.getElementById(id).classList.add("hidden");
+      }
+    });
+    if (willShow) { openTableSubmenu(panel); }
+    else { closeTableSubmenus(); panel.classList.add("hidden"); }
+    return;
+  }
+  /* The border panels live inside the Borders fly-out, so
+     toggling one must leave its fly-out standing; every
+     other inline panel closes the fly-outs, keeping one
+     submenu open at a time. */
+  if (subId !== "cellBorderStyleSub" &&
+      subId !== "cellBorderWidthSub") {
+    closeTableSubmenus();
+  }
   CELL_SUB_IDS.forEach(function (id) {
     if (id !== subId) {
       document.getElementById(id).classList.add("hidden");
@@ -6775,8 +6928,7 @@ function wireCellMenu() {
     /* v2.209: the selector strips and the Add row bar are
        table furniture too: resting on them is not leaving
        the table. */
-    if (target.closest("#tableSelectStrips") ||
-        target.closest(".ss-tsel-add")) { return; }
+    if (target.closest("#tableSelectStrips")) { return; }
     /* v2.92.0: the resize furniture is table furniture
        too: resting on a strip or the handle is not
        leaving the table, so the hover cell stands (and
@@ -6900,7 +7052,7 @@ function wireCellMenu() {
   const stripLayer = document.getElementById("tableSelectStrips");
   function stripSpecOf(ev) {
     const el = ev.target && ev.target.closest ?
-      ev.target.closest(".ss-tsel-seg, .ss-tsel-add") : null;
+      ev.target.closest(".ss-tsel-seg") : null;
     return el && el._ssStripSpec ?
       { el: el, spec: el._ssStripSpec } : null;
   }
@@ -6927,7 +7079,6 @@ function wireCellMenu() {
     stripSuppressEl = hit.el;
     const spec = hit.spec;
     if (!spec.table || !spec.table.isConnected) { return; }
-    if (spec.kind === "add") { return; }
     /* v2.211: hold the pointer for the drag's life, so
        a fast travel cannot hand the gesture to another
        element or lose the release outside the window. */
@@ -7014,10 +7165,6 @@ function wireCellMenu() {
     if (!hit) { return; }
     const spec = hit.spec;
     if (!spec.table || !spec.table.isConnected) { return; }
-    if (spec.kind === "add") {
-      addRowToTableEnd(spec.table);
-      return;
-    }
     selectStripSlice(spec);
   });
 
@@ -7085,6 +7232,14 @@ function wireCellMenu() {
       }
       if (target.closest("#cellResetBtn")) { resetCellStyles(); return; }
       if (target.closest("#cellCopyBtn")) { copyCellSelection(); return; }
+      el = target.closest("[data-table-submenu]");
+      if (el) {
+        const panels = { add: "tableAddSub",
+          borders: "tableBordersSub" };
+        openTableSubmenu(document.getElementById(
+          panels[el.getAttribute("data-table-submenu")]));
+        return;
+      }
       el = target.closest("[data-cell-menu]");
       if (el) {
         const subs = {
@@ -7096,6 +7251,30 @@ function wireCellMenu() {
         const subId = subs[el.getAttribute("data-cell-menu")];
         if (subId) { toggleCellSub(subId); }
       }
+    });
+  /* v2.216: the fly-out wraps: a hover or a press on a
+     fly-out's row opens its panel (the delegated listener
+     above takes the press; opening is idempotent, so the
+     pair cannot double-fire), and leaving the wrap starts
+     the close grace, which entering the panel cancels by
+     passing through this same wrap. A scroll of the parent
+     menu puts an open fixed panel away. */
+  document.querySelectorAll("#tableMenu .table-submenu-wrap")
+    .forEach(function (wrap) {
+      const panel = wrap.querySelector(".table-submenu");
+      if (!panel) { return; }
+      wrap.addEventListener("mouseenter", function () {
+        openTableSubmenu(panel);
+      });
+      wrap.addEventListener("mouseleave", function () {
+        scheduleTableSubmenuClose(panel);
+      });
+    });
+  document.getElementById("tableMenu").addEventListener("scroll",
+    function () {
+      const open = document.querySelector(
+        "#tableMenu .table-submenu:not(.hidden)");
+      if (open) { closeTableSubmenus(); }
     });
   document.getElementById("cellFilterForm").addEventListener("submit",
     function (ev) {
@@ -7113,8 +7292,7 @@ function wireCellMenu() {
     if (target.closest("#tableMenu") ||
         target.closest("#tableMenuBtn") ||
         target.closest("#tableFilterChip") ||
-        target.closest("#tableSelectStrips") ||
-        target.closest(".ss-tsel-add")) { return; }
+        target.closest("#tableSelectStrips")) { return; }
     /* v2.209: the toolbar is exempt from the selection
        clearing too: its commands now act on the range, and
        a press must leave the range standing for the next

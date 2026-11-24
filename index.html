@@ -7195,11 +7195,15 @@
                multi-cell range) captured when the menu opened. -->
           <button id="tableMenuBtn" class="hidden" type="button" aria-haspopup="true" aria-expanded="false">Table <span class="table-caret" aria-hidden="true">&#9662;</span></button>
           <div id="tableMenu" class="hidden" role="menu" aria-label="Table options">
-            <button class="att-menu-item" type="button" data-table-action="rowAbove">Add row above</button>
-            <button class="att-menu-item" type="button" data-table-action="rowBelow">Add row below</button>
-            <div class="att-menu-sep"></div>
-            <button class="att-menu-item" type="button" data-table-action="colLeft">Add column left</button>
-            <button class="att-menu-item" type="button" data-table-action="colRight">Add column right</button>
+            <div class="table-submenu-wrap">
+              <button class="att-menu-item cell-flex" type="button" data-table-submenu="add" aria-haspopup="true" aria-expanded="false"><span>Add</span><span class="cell-menu-value">&#8250;</span></button>
+              <div class="table-submenu hidden" id="tableAddSub" role="menu" aria-label="Add">
+                <button class="att-menu-item" type="button" data-table-action="rowAbove">Add row above</button>
+                <button class="att-menu-item" type="button" data-table-action="rowBelow">Add row below</button>
+                <button class="att-menu-item" type="button" data-table-action="colLeft">Add column left</button>
+                <button class="att-menu-item" type="button" data-table-action="colRight">Add column right</button>
+              </div>
+            </div>
             <div class="att-menu-sep"></div>
             <button class="att-menu-item" type="button" data-table-action="deleteRow">Delete row</button>
             <button class="att-menu-item" type="button" data-table-action="deleteCol">Delete column</button>
@@ -7226,12 +7230,17 @@
             </div>
             <div class="att-menu-sep"></div>
             <button class="att-menu-item cell-flex" type="button" id="cellHeaderToggle" role="switch" aria-checked="false"><span>Header row</span><span class="cell-toggle" aria-hidden="true"><span class="cell-toggle-knob"></span></span></button>
-            <button class="att-menu-item cell-flex" type="button" data-cell-menu="background"><span>Cell background</span><span class="cell-menu-value">&#8250;</span></button>
-            <div class="cell-sub hidden" id="cellBgSub">
+            <div class="table-submenu-wrap">
+            <button class="att-menu-item cell-flex" type="button" data-cell-menu="background" aria-haspopup="true" aria-expanded="false"><span>Cell background</span><span class="cell-menu-value">&#8250;</span></button>
+            <div class="table-submenu hidden" id="cellBgSub">
               <div class="tb-swatches" id="cellBgSwatches"></div>
               <button class="att-menu-item" type="button" id="cellBgNone">None</button>
               <label class="tb-custom-row">Custom <input type="color" id="cellBgCustom" value="#D9EAD3"></label>
             </div>
+            </div>
+            <div class="table-submenu-wrap">
+            <button class="att-menu-item cell-flex" type="button" data-table-submenu="borders" aria-haspopup="true" aria-expanded="false"><span>Borders</span><span class="cell-menu-value">&#8250;</span></button>
+            <div class="table-submenu hidden" id="tableBordersSub">
             <button class="att-menu-item cell-flex" type="button" data-cell-menu="borderStyle"><span>Border style</span><span class="cell-menu-value" id="cellMenuBorderStyleValue"></span></button>
             <div class="cell-sub hidden" id="cellBorderStyleSub">
               <button class="att-menu-item" type="button" data-cell-border-style="solid">Solid</button>
@@ -7246,6 +7255,8 @@
               <button class="att-menu-item" type="button" data-cell-border-width="4px">Thick</button>
             </div>
             <button class="att-menu-item" type="button" id="cellResetBtn">Reset style</button>
+            </div>
+            </div>
             <div class="att-menu-sep"></div>
             <button class="att-menu-item cell-flex" type="button" data-cell-menu="align"><span>Align content</span><span class="cell-menu-value" id="cellMenuAlignValue">Top</span></button>
             <div class="cell-sub hidden" id="cellAlignSub">
@@ -7283,20 +7294,17 @@
                the strips per table; both start empty and hidden. -->
           <div id="tableResizeStrips" aria-hidden="true"></div>
           <button id="tableResizeHandle" class="hidden" type="button" aria-label="Resize table" title="Drag to resize the table"></button>
-          <!-- v2.209: the selector strips and the Add row bar,
+          <!-- v2.209, reshaped in v2.216: the selector strips,
                also siblings of #noteBody like the rest of the table
                furniture, so none of it can ever be saved into a
                note: thin segments parked above the active table's
                columns and beside its rows (a click selects the
-               whole column or row), and a small bar parked under
-               the table that appends a row at its end. The script
-               (the v2.209 gridlines and selector strips section)
-               builds the segments per table; both start empty
-               and hidden. -->
+               whole column or row). v2.216 clips every segment to
+               the editor scroll area and removes the Add row bar
+               entirely. The script (the gridlines and selector
+               strips section) builds the segments per table; the
+               layer starts empty. -->
           <div id="tableSelectStrips" aria-hidden="true"></div>
-          <!-- v2.210: the Add row bar rides in the strips
-               layer now, one per table (class ss-tsel-add);
-               the single parked button retired with it. -->
 
                   </div>
       </div>

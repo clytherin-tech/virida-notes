@@ -2256,7 +2256,7 @@ body.dark .home-cal-note-time{color:var(--accent);}
    without ever shouting. */
 #noteList, .editor-scroll, .tasks-scroll, #sidebar, #sidebarRail, #railFlyout,
 #tagPicker, .mention-list, .note-link-list, .filter-tag-list,
-.version-history-list, .version-preview, .tb-menu, .tb-submenu, .modal,
+.version-history-list, .version-preview, .tb-menu, .tb-submenu, .table-submenu, .modal,
 .nb-submenu, #nbActionMenu.nb-context,
 .share-people-list, .share-suggestions{
   scrollbar-width: thin;
@@ -2267,7 +2267,7 @@ body.dark .home-cal-note-time{color:var(--accent);}
 .mention-list:hover, .note-link-list:hover,
 .share-people-list:hover, .share-suggestions:hover,
 .filter-tag-list:hover, .version-history-list:hover,
-.version-preview:hover, .tb-menu:hover, .tb-submenu:hover, .modal:hover,
+.version-preview:hover, .tb-menu:hover, .tb-submenu:hover, .table-submenu:hover, .modal:hover,
 .nb-submenu:hover, #nbActionMenu.nb-context:hover{
   scrollbar-color: rgba(139,94,52,.55) transparent;
 }
@@ -2280,7 +2280,7 @@ body.dark .note-link-list:hover, body.dark .filter-tag-list:hover,
 body.dark .share-people-list:hover,
 body.dark .share-suggestions:hover,
 body.dark .version-history-list:hover,
-body.dark .version-preview:hover, body.dark .tb-menu:hover, body.dark .tb-submenu:hover,
+body.dark .version-preview:hover, body.dark .tb-menu:hover, body.dark .tb-submenu:hover, body.dark .table-submenu:hover,
 body.dark .modal:hover, body.dark .nb-submenu:hover,
 body.dark #nbActionMenu.nb-context:hover{
   scrollbar-color: rgba(139,94,52,.65) transparent;
@@ -2292,7 +2292,7 @@ body.dark #nbActionMenu.nb-context:hover{
 .note-link-list::-webkit-scrollbar,
 .filter-tag-list::-webkit-scrollbar,
 .version-history-list::-webkit-scrollbar,
-.version-preview::-webkit-scrollbar, .tb-menu::-webkit-scrollbar, .tb-submenu::-webkit-scrollbar,
+.version-preview::-webkit-scrollbar, .tb-menu::-webkit-scrollbar, .tb-submenu::-webkit-scrollbar, .table-submenu::-webkit-scrollbar,
 .modal::-webkit-scrollbar, .nb-submenu::-webkit-scrollbar,
 #nbActionMenu.nb-context::-webkit-scrollbar{
   width:10px;height:10px;
@@ -2308,7 +2308,7 @@ body.dark #nbActionMenu.nb-context:hover{
 .filter-tag-list::-webkit-scrollbar-track,
 .version-history-list::-webkit-scrollbar-track,
 .version-preview::-webkit-scrollbar-track,
-.tb-menu::-webkit-scrollbar-track, .tb-submenu::-webkit-scrollbar-track,
+.tb-menu::-webkit-scrollbar-track, .tb-submenu::-webkit-scrollbar-track, .table-submenu::-webkit-scrollbar-track,
 .modal::-webkit-scrollbar-track,
 .nb-submenu::-webkit-scrollbar-track,
 #nbActionMenu.nb-context::-webkit-scrollbar-track{
@@ -2325,7 +2325,7 @@ body.dark #nbActionMenu.nb-context:hover{
 .filter-tag-list::-webkit-scrollbar-thumb,
 .version-history-list::-webkit-scrollbar-thumb,
 .version-preview::-webkit-scrollbar-thumb,
-.tb-menu::-webkit-scrollbar-thumb, .tb-submenu::-webkit-scrollbar-thumb,
+.tb-menu::-webkit-scrollbar-thumb, .tb-submenu::-webkit-scrollbar-thumb, .table-submenu::-webkit-scrollbar-thumb,
 .modal::-webkit-scrollbar-thumb,
 .nb-submenu::-webkit-scrollbar-thumb,
 #nbActionMenu.nb-context::-webkit-scrollbar-thumb{
@@ -2341,7 +2341,7 @@ body.dark #nbActionMenu.nb-context:hover{
 .filter-tag-list:hover::-webkit-scrollbar-thumb,
 .version-history-list:hover::-webkit-scrollbar-thumb,
 .version-preview:hover::-webkit-scrollbar-thumb,
-.tb-menu:hover::-webkit-scrollbar-thumb, .tb-submenu:hover::-webkit-scrollbar-thumb,
+.tb-menu:hover::-webkit-scrollbar-thumb, .tb-submenu:hover::-webkit-scrollbar-thumb, .table-submenu:hover::-webkit-scrollbar-thumb,
 .modal:hover::-webkit-scrollbar-thumb,
 .nb-submenu:hover::-webkit-scrollbar-thumb,
 #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
@@ -2360,7 +2360,7 @@ body.dark .note-link-list:hover::-webkit-scrollbar-thumb,
 body.dark .filter-tag-list:hover::-webkit-scrollbar-thumb,
 body.dark .version-history-list:hover::-webkit-scrollbar-thumb,
 body.dark .version-preview:hover::-webkit-scrollbar-thumb,
-body.dark .tb-menu:hover::-webkit-scrollbar-thumb, body.dark .tb-submenu:hover::-webkit-scrollbar-thumb,
+body.dark .tb-menu:hover::-webkit-scrollbar-thumb, body.dark .tb-submenu:hover::-webkit-scrollbar-thumb, body.dark .table-submenu:hover::-webkit-scrollbar-thumb,
 body.dark .modal:hover::-webkit-scrollbar-thumb,
 body.dark .nb-submenu:hover::-webkit-scrollbar-thumb,
 body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
@@ -2377,7 +2377,7 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
 .filter-tag-list::-webkit-scrollbar-thumb:hover,
 .version-history-list::-webkit-scrollbar-thumb:hover,
 .version-preview::-webkit-scrollbar-thumb:hover,
-.tb-menu::-webkit-scrollbar-thumb:hover, .tb-submenu::-webkit-scrollbar-thumb:hover,
+.tb-menu::-webkit-scrollbar-thumb:hover, .tb-submenu::-webkit-scrollbar-thumb:hover, .table-submenu::-webkit-scrollbar-thumb:hover,
 .modal::-webkit-scrollbar-thumb:hover,
 .nb-submenu::-webkit-scrollbar-thumb:hover,
 #nbActionMenu.nb-context::-webkit-scrollbar-thumb:hover{
@@ -3278,17 +3278,6 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
   color:var(--surface);}
 .ss-tsel-seg[data-kind="col"]{border-radius:4px 4px 0 0;}
 .ss-tsel-seg[data-kind="row"]{border-radius:4px 0 0 4px;}
-.ss-tsel-add{
-  position:fixed;z-index:59;touch-action:none;
-  box-sizing:border-box;
-  display:inline-flex;align-items:center;gap:5px;
-  padding:4px 10px;border-radius:999px;
-  background:var(--surface);border:1px solid var(--border);
-  box-shadow:0 6px 18px rgba(6,32,22,.20);
-  color:var(--primary);font-size:12.5px;font-weight:600;cursor:pointer;
-  user-select:none;-webkit-user-select:none;
-}
-.ss-tsel-add:hover{border-color:var(--accent);}
 .ss-tsel-line{
   position:fixed;z-index:60;pointer-events:none;
   background:var(--accent);border-radius:2px;
@@ -3315,6 +3304,26 @@ body.dark #nbActionMenu.nb-context:hover::-webkit-scrollbar-thumb{
 }
 .cell-sub.hidden{display:none;}
 .cell-sub .att-menu-item{font-size:13.5px;}
+/* v2.216: the Table menu's fly-outs. A fly-out is a fixed,
+   themed card standing beside its parent menu, in the same
+   dress as the menu itself; it is a DOM child of its wrap
+   inside #tableMenu, so the menu's own dismissal rules cover
+   it, while its fixed placement keeps the menu's scroll box
+   from clipping it. Only one stands open at a time, and the
+   Borders fly-out carries the standing inline sub panels
+   for Border style and Border width inside it. */
+.table-submenu-wrap{position:relative;}
+.table-submenu{
+  position:fixed;z-index:62;min-width:220px;max-width:300px;
+  max-height:calc(100vh - 16px);overflow-y:auto;padding:6px;
+  background:var(--surface);border:1px solid var(--border);
+  border-top:3px solid var(--brown-600);
+  border-radius:var(--radius-card);
+  box-shadow:0 10px 28px rgba(6,32,22,.28);
+  display:flex;flex-direction:column;gap:2px;
+}
+.table-submenu.hidden{display:none;}
+.table-submenu .cell-sub{margin-left:0;}
 /* The header row switch: a small pill with a knob, filled with the
    secondary green while on. */
 .cell-toggle{
