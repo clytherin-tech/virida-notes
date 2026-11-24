@@ -727,6 +727,21 @@ function sanitizeImdbFetched(parsed) {
     if (!posterUrl && !description) { return; }
     const rec = { title: title, posterUrl: posterUrl,
       description: description, at: at };
+    /* v2.217: a cached entry's people stand or fall
+       by the same strict shape as the file's (the
+       v2.184 block in sanitizeImdbPreviews): the
+       main actors as a list of names, the director
+       as one name, anything else dropped. */
+    if (Array.isArray(raw.actors)) {
+      const names = raw.actors.filter(function (n) {
+        return typeof n === "string" && !!n.trim();
+      }).map(function (n) { return n.trim(); });
+      if (names.length) { rec.actors = names; }
+    }
+    if (typeof raw.director === "string" &&
+        !!raw.director.trim()) {
+      rec.director = raw.director.trim();
+    }
     /* v2.214: a cached trailer stands or falls by
        the same strict shape as the file's. */
     if (typeof raw.trailer === "string" &&
@@ -763,6 +778,9 @@ function imdbFetchedHit(ttId) {
   return { title: rec.title || "",
     posterUrl: rec.posterUrl || "",
     description: rec.description || "",
+    actors: (rec.actors && rec.actors.length)
+      ? rec.actors.slice() : null,
+    director: rec.director || "",
     trailer: rec.trailer || "" };
 }
 
@@ -819,7 +837,19 @@ const imdbFetchFlights = Object.create(null);
    where Wikidata carries a film's trailer; a
    well shaped one rides the entry and the cache
    record as "trailer", and an item with none
-   simply answers without one. */
+   simply answers without one.
+   v2.217: the same query also asks the item for
+   its directors (P57) and its cast members
+   (P161), with English labels from the label
+   service, so a fetched title's Starring and
+   Director lines stand without the curated
+   file: the directors join as one name, and the
+   cast collects to the file's standing count of
+   principal names, by the statements' series
+   ordinal (P1545) where the record gives one
+   and in the answer's own order where it does
+   not, a member the label service cannot name
+   in English never standing as a name. */
 function fetchImdbReference(ttId) {
   if (!ttId) { return Promise.resolve(null); }
   if (imdbFetchFlights[ttId]) {
@@ -827,12 +857,19 @@ function fetchImdbReference(ttId) {
   }
   const flight = (async function () {
     try {
-      const query = "SELECT ?article ?yt WHERE {" +
+      const query = "SELECT ?article ?yt ?directorLabel" +
+        " ?castMemberLabel ?ord WHERE {" +
         " ?item wdt:P345 \"" + ttId + "\"." +
         " OPTIONAL { ?item wdt:P1651 ?yt. }" +
+        " OPTIONAL { ?item wdt:P57 ?director. }" +
+        " OPTIONAL { ?item p:P161 ?castStmt." +
+        " ?castStmt ps:P161 ?castMember." +
+        " OPTIONAL { ?castStmt pq:P1545 ?ord. } }" +
         " ?article schema:about ?item;" +
         " schema:isPartOf <https://en.wikipedia.org/>." +
-        " } LIMIT 5";
+        " SERVICE wikibase:label {" +
+        " bd:serviceParam wikibase:language \"en\". }" +
+        " } LIMIT 1000";
       const sparql = await imdbFetchJson(
         "https://query.wikidata.org/sparql?query=" +
         encodeURIComponent(query) + "&format=json");
@@ -862,6 +899,58 @@ function fetchImdbReference(ttId) {
           break;
         }
       }
+      /* v2.217: the people the same answer carries.
+         The joins multiply the rows (every director
+         against every cast member against every
+         trailer), so each name is taken once, at its
+         first row: the directors in row order, the
+         cast judged after the pass, the members the
+         label service could only name by their id
+         (a bare Q number) never standing as names. */
+      const directorNames = [];
+      const castSeen = Object.create(null);
+      const castList = [];
+      for (let ci = 0; ci < bindings.length; ci++) {
+        const dLab = bindings[ci].directorLabel &&
+          bindings[ci].directorLabel.value;
+        if (typeof dLab === "string" && !!dLab.trim() &&
+            !/^Q\d+$/.test(dLab.trim()) &&
+            directorNames.indexOf(dLab.trim()) < 0) {
+          directorNames.push(dLab.trim());
+        }
+        const cLab = bindings[ci].castMemberLabel &&
+          bindings[ci].castMemberLabel.value;
+        if (typeof cLab === "string" && !!cLab.trim() &&
+            !/^Q\d+$/.test(cLab.trim()) &&
+            !castSeen[cLab.trim()]) {
+          const ordRaw = bindings[ci].ord &&
+            bindings[ci].ord.value;
+          const ordNum = (typeof ordRaw === "string" &&
+              /^\d+$/.test(ordRaw)) ? parseInt(ordRaw, 10)
+            : null;
+          const rec = { name: cLab.trim(), ord: ordNum,
+            at: castList.length };
+          castSeen[rec.name] = rec;
+          castList.push(rec);
+        }
+      }
+      /* Billing order where the record gives one:
+         the ordinal holders first, in ordinal order;
+         the rest in the answer's own order, which
+         is all the record offers for them. The
+         standing count is the file's: three
+         principal names. */
+      castList.sort(function (a, b) {
+        const ao = a.ord !== null, bo = b.ord !== null;
+        if (ao && bo) { return (a.ord - b.ord) ||
+          (a.at - b.at); }
+        if (ao) { return -1; }
+        if (bo) { return 1; }
+        return a.at - b.at;
+      });
+      const actorNames = castList.slice(0, 3)
+        .map(function (r) { return r.name; });
+      const directorJoined = directorNames.join(", ");
       if (!slug) {
         imdbFetchedById[ttId] = { miss: true,
           at: Date.now() };
@@ -897,6 +986,12 @@ function fetchImdbReference(ttId) {
           .slice(0, IMDB_FETCH_DESC_CAP),
         trailer: trailer
       };
+      /* v2.217: the people ride the entry the way
+         they ride the file's: the actors as a list
+         of names, the director as one name, each
+         standing only when the record carried it. */
+      if (actorNames.length) { entry.actors = actorNames; }
+      if (directorJoined) { entry.director = directorJoined; }
       if (!entry.posterUrl && !entry.description) {
         imdbFetchedById[ttId] = { miss: true,
           at: Date.now() };
@@ -907,6 +1002,8 @@ function fetchImdbReference(ttId) {
         posterUrl: entry.posterUrl,
         description: entry.description, at: Date.now() };
       if (entry.trailer) { hitRec.trailer = entry.trailer; }
+      if (entry.actors) { hitRec.actors = entry.actors; }
+      if (entry.director) { hitRec.director = entry.director; }
       imdbFetchedById[ttId] = hitRec;
       saveImdbFetchedDeviceCache();
       return entry;
@@ -932,8 +1029,10 @@ async function resolveImdbPreview(ttId) {
     return { title: hit ? hit.title : "",
       posterUrl: file.posterUrl || "",
       description: file.description || "",
-      actors: file.actors || null,
-      director: file.director || "",
+      actors: file.actors ||
+        (hit ? hit.actors : null) || null,
+      director: file.director ||
+        (hit ? hit.director : "") || "",
       trailer: file.trailer ||
         (hit ? hit.trailer : "") || "" };
   }
@@ -1027,6 +1126,8 @@ function imdbPreviewEntry(ttId) {
   if (!hit) { return null; }
   return { posterUrl: hit.posterUrl,
     description: hit.description,
+    actors: hit.actors || null,
+    director: hit.director || "",
     trailer: hit.trailer || "" };
 }
 
